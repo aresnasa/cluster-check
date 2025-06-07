@@ -1,0 +1,518 @@
+#!/bin/bash
+# CPU Worker节点健康检查脚本
+
+OUTPUT_FORMAT="${OUTPUT_FORMAT:-html}"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+HOSTNAME=$(hostname)
+RESULTS_DIR="/tmp/cluster_check_results"
+NODE_TYPE="${NODE_TYPE:-cpu_worker}"
+
+mkdir -p "$RESULTS_DIR"
+
+if [ "$OUTPUT_FORMAT" = "html" ]; then
+    REPORT_FILE="$RESULTS_DIR/${HOSTNAME}_${NODE_TYPE}_check_${TIMESTAMP}.html"
+else
+    REPORT_FILE="$RESULTS_DIR/${HOSTNAME}_${NODE_TYPE}_check_${TIMESTAMP}.txt"
+fi
+
+echo "🔧 在$HOSTNAME上开始CPU Worker节点健康检查"
+echo "📅 时间戳: $(date)"
+echo "📂 报告将保存到: $REPORT_FILE"
+
+# 生成HTML报告
+if [ "$OUTPUT_FORMAT" = "html" ]; then
+    cat > "$REPORT_FILE" << 'EOF'
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CPU Worker节点健康检查报告</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #ff7b7b 0%, #667eea 100%); color: white; padding: 30px; text-align: center; }
+        .header h1 { margin: 0; font-size: 2.5em; font-weight: 300; }
+        .header p { margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1em; }
+        .content { padding: 30px; }
+        .section { margin-bottom: 30px; }
+        .section h2 { color: #333; border-bottom: 2px solid #667eea; padding-bottom: 10px; margin-bottom: 20px; }
+        .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .info-card { background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid #ff7b7b; }
+        .info-card h3 { margin: 0 0 10px 0; color: #495057; }
+        .status { padding: 4px 12px; border-radius: 20px; font-weight: bold; text-transform: uppercase; font-size: 0.8em; }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.warning { background: #fff3cd; color: #856404; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .command-output { background: #2d3748; color: #e2e8f0; padding: 15px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 0.9em; overflow-x: auto; }
+        .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; border-top: 1px solid #dee2e6; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔧 CPU Worker节点健康检查</h1>
+            <p>节点: $(hostname) | 时间: $(date)</p>
+        </div>
+        <div class="content">
+EOF
+
+    # 系统信息
+    echo '<div class="section">' >> "$REPORT_FILE"
+    echo '<h2>📊 系统信息</h2>' >> "$REPORT_FILE"
+    echo '<div class="info-grid">' >> "$REPORT_FILE"
+    
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>🖥️ 基本系统信息</h3>' >> "$REPORT_FILE"
+    echo "<p><strong>主机名:</strong> $(hostname)</p>" >> "$REPORT_FILE"
+    echo "<p><strong>操作系统:</strong> $(lsb_release -d 2>/dev/null | cut -f2 || cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)</p>" >> "$REPORT_FILE"
+    echo "<p><strong>内核版本:</strong> $(uname -r)</p>" >> "$REPORT_FILE"
+    echo "<p><strong>系统架构:</strong> $(uname -m)</p>" >> "$REPORT_FILE"
+    echo "<p><strong>系统运行时间:</strong> $(uptime -p 2>/dev/null || uptime)</p>" >> "$REPORT_FILE"
+    echo '</div>' >> "$REPORT_FILE"
+    
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>💾 内存和CPU</h3>' >> "$REPORT_FILE"
+    echo "<p><strong>CPU核心数:</strong> $(nproc)</p>" >> "$REPORT_FILE"
+    echo "<p><strong>CPU型号:</strong> $(grep -m1 'model name' /proc/cpuinfo | cut -d':' -f2 | xargs)</p>" >> "$REPORT_FILE"
+    echo "<p><strong>总内存:</strong> $(free -h | awk '/^Mem:/ {print $2}')</p>" >> "$REPORT_FILE"
+    echo "<p><strong>可用内存:</strong> $(free -h | awk '/^Mem:/ {print $7}')</p>" >> "$REPORT_FILE"
+    echo "<p><strong>负载平均值:</strong> $(uptime | awk -F'load average:' '{print $2}')</p>" >> "$REPORT_FILE"
+    echo '</div>' >> "$REPORT_FILE"
+    
+    echo '</div>' >> "$REPORT_FILE"
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # Kubernetes Worker节点系统配置检查
+    echo '<div class="section">' >> "$REPORT_FILE"
+    echo '<h2>🔧 Kubernetes Worker节点系统配置检查</h2>' >> "$REPORT_FILE"
+    
+    # Cgroup版本检查
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>📁 Cgroup版本检查</h3>' >> "$REPORT_FILE"
+    if [ -d /sys/fs/cgroup/unified ]; then
+        echo '<p><strong>Cgroup版本:</strong> <span class="status success">Cgroup v2</span></p>' >> "$REPORT_FILE"
+    elif [ -d /sys/fs/cgroup/memory ]; then
+        echo '<p><strong>Cgroup版本:</strong> <span class="status warning">Cgroup v1</span></p>' >> "$REPORT_FILE"
+        echo '<p>建议：现代Kubernetes版本推荐使用Cgroup v2</p>' >> "$REPORT_FILE"
+    else
+        echo '<p><strong>Cgroup版本:</strong> <span class="status error">未知</span></p>' >> "$REPORT_FILE"
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # 防火墙状态检查
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>🔥 防火墙状态检查</h3>' >> "$REPORT_FILE"
+    if systemctl is-active --quiet firewalld; then
+        echo '<p><strong>Firewalld:</strong> <span class="status error">运行中 ❌</span></p>' >> "$REPORT_FILE"
+        echo '<p>❗ 警告：防火墙应该关闭以避免Kubernetes网络问题</p>' >> "$REPORT_FILE"
+    else
+        echo '<p><strong>Firewalld:</strong> <span class="status success">已关闭 ✅</span></p>' >> "$REPORT_FILE"
+    fi
+    
+    if systemctl is-active --quiet ufw; then
+        echo '<p><strong>UFW:</strong> <span class="status error">运行中 ❌</span></p>' >> "$REPORT_FILE"
+        echo '<p>❗ 警告：UFW防火墙应该关闭</p>' >> "$REPORT_FILE"
+    else
+        echo '<p><strong>UFW:</strong> <span class="status success">已关闭 ✅</span></p>' >> "$REPORT_FILE"
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # SELinux状态检查
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>🔒 SELinux状态检查</h3>' >> "$REPORT_FILE"
+    if command -v getenforce >/dev/null 2>&1; then
+        selinux_status=$(getenforce 2>/dev/null)
+        if [ "$selinux_status" = "Disabled" ]; then
+            echo '<p><strong>SELinux:</strong> <span class="status success">已禁用 ✅</span></p>' >> "$REPORT_FILE"
+        else
+            echo "<p><strong>SELinux:</strong> <span class=\"status error\">$selinux_status ❌</span></p>" >> "$REPORT_FILE"
+            echo '<p>❗ 警告：SELinux应该禁用以避免Kubernetes权限问题</p>' >> "$REPORT_FILE"
+        fi
+    else
+        echo '<p><strong>SELinux:</strong> <span class="status success">未安装 ✅</span></p>' >> "$REPORT_FILE"
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # Swap检查
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>💽 Swap状态检查</h3>' >> "$REPORT_FILE"
+    swap_info=$(swapon --show 2>/dev/null)
+    if [ -z "$swap_info" ]; then
+        echo '<p><strong>Swap:</strong> <span class="status success">已禁用 ✅</span></p>' >> "$REPORT_FILE"
+    else
+        echo '<p><strong>Swap:</strong> <span class="status error">启用中 ❌</span></p>' >> "$REPORT_FILE"
+        echo '<p>❗ 警告：Kubernetes要求禁用Swap</p>' >> "$REPORT_FILE"
+        echo '<div class="command-output">' >> "$REPORT_FILE"
+        echo "$swap_info" >> "$REPORT_FILE"
+        echo '</div>' >> "$REPORT_FILE"
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # 时区和NTP检查
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>🕐 时区和时间同步检查</h3>' >> "$REPORT_FILE"
+    current_timezone=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "unknown")
+    if [ "$current_timezone" = "Asia/Shanghai" ]; then
+        echo '<p><strong>时区:</strong> <span class="status success">Asia/Shanghai ✅</span></p>' >> "$REPORT_FILE"
+    else
+        echo "<p><strong>时区:</strong> <span class=\"status error\">$current_timezone ❌</span></p>" >> "$REPORT_FILE"
+        echo '<p>❗ 警告：建议设置时区为Asia/Shanghai</p>' >> "$REPORT_FILE"
+    fi
+    
+    if systemctl is-active --quiet chronyd; then
+        echo '<p><strong>Chronyd:</strong> <span class="status success">运行中 ✅</span></p>' >> "$REPORT_FILE"
+    elif systemctl is-active --quiet ntp; then
+        echo '<p><strong>NTP:</strong> <span class="status success">运行中 ✅</span></p>' >> "$REPORT_FILE"
+    else
+        echo '<p><strong>时间同步:</strong> <span class="status error">未配置 ❌</span></p>' >> "$REPORT_FILE"
+        echo '<p>❗ 警告：建议配置Chronyd或NTP进行时间同步</p>' >> "$REPORT_FILE"
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # 内核参数检查
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>⚙️ Kubernetes内核参数检查</h3>' >> "$REPORT_FILE"
+    echo '<p>检查 /etc/sysctl.d/k8s.conf 中的关键参数:</p>' >> "$REPORT_FILE"
+    
+    # 检查关键内核参数
+    check_sysctl_param() {
+        local param=$1
+        local expected=$2
+        local current=$(sysctl -n $param 2>/dev/null)
+        if [ "$current" = "$expected" ]; then
+            echo "<p><strong>$param:</strong> <span class=\"status success\">$current ✅</span></p>" >> "$REPORT_FILE"
+        else
+            echo "<p><strong>$param:</strong> <span class=\"status error\">$current (期望: $expected) ❌</span></p>" >> "$REPORT_FILE"
+        fi
+    }
+    
+    check_sysctl_param "net.bridge.bridge-nf-call-ip6tables" "1"
+    check_sysctl_param "net.bridge.bridge-nf-call-iptables" "1"
+    check_sysctl_param "net.ipv4.ip_forward" "1"
+    check_sysctl_param "vm.swappiness" "0"
+    check_sysctl_param "net.ipv4.conf.default.rp_filter" "1"
+    check_sysctl_param "net.ipv4.conf.all.rp_filter" "1"
+    
+    if [ -f /etc/sysctl.d/k8s.conf ]; then
+        echo '<p><strong>配置文件:</strong> <span class="status success">/etc/sysctl.d/k8s.conf 存在 ✅</span></p>' >> "$REPORT_FILE"
+        echo '<div class="command-output">' >> "$REPORT_FILE"
+        echo "=== /etc/sysctl.d/k8s.conf 内容 ===" >> "$REPORT_FILE"
+        cat /etc/sysctl.d/k8s.conf >> "$REPORT_FILE"
+        echo '</div>' >> "$REPORT_FILE"
+    else
+        echo '<p><strong>配置文件:</strong> <span class="status error">/etc/sysctl.d/k8s.conf 不存在 ❌</span></p>' >> "$REPORT_FILE"
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # Kubernetes软件包检查
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>📦 Kubernetes软件包检查</h3>' >> "$REPORT_FILE"
+    
+    # 检查kubelet
+    if command -v kubelet >/dev/null 2>&1; then
+        kubelet_version=$(kubelet --version 2>/dev/null | awk '{print $2}')
+        echo "<p><strong>kubelet:</strong> <span class=\"status success\">$kubelet_version ✅</span></p>" >> "$REPORT_FILE"
+    else
+        echo '<p><strong>kubelet:</strong> <span class="status error">未安装 ❌</span></p>' >> "$REPORT_FILE"
+    fi
+    
+    # 检查kubeadm
+    if command -v kubeadm >/dev/null 2>&1; then
+        kubeadm_version=$(kubeadm version -o short 2>/dev/null)
+        echo "<p><strong>kubeadm:</strong> <span class=\"status success\">$kubeadm_version ✅</span></p>" >> "$REPORT_FILE"
+    else
+        echo '<p><strong>kubeadm:</strong> <span class="status error">未安装 ❌</span></p>' >> "$REPORT_FILE"
+    fi
+    
+    # 检查kubectl
+    if command -v kubectl >/dev/null 2>&1; then
+        kubectl_version=$(kubectl version --client -o json 2>/dev/null | grep gitVersion | cut -d'"' -f4)
+        echo "<p><strong>kubectl:</strong> <span class=\"status success\">$kubectl_version ✅</span></p>" >> "$REPORT_FILE"
+    else
+        echo '<p><strong>kubectl:</strong> <span class="status warning">未安装 ⚠️</span></p>' >> "$REPORT_FILE"
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # 容器运行时检查
+    echo '<div class="section">' >> "$REPORT_FILE"
+    echo '<h2>🐳 容器运行时检查</h2>' >> "$REPORT_FILE"
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>🔧 容器运行时</h3>' >> "$REPORT_FILE"
+    
+    if command -v docker >/dev/null 2>&1; then
+        docker_version=$(docker --version 2>/dev/null)
+        echo "<p><strong>Docker:</strong> <span class=\"status success\">$docker_version ✅</span></p>" >> "$REPORT_FILE"
+        if systemctl is-active --quiet docker; then
+            echo '<p><strong>Docker服务:</strong> <span class="status success">运行中 ✅</span></p>' >> "$REPORT_FILE"
+        else
+            echo '<p><strong>Docker服务:</strong> <span class="status error">未运行 ❌</span></p>' >> "$REPORT_FILE"
+        fi
+    else
+        echo '<p><strong>Docker:</strong> <span class="status error">未安装 ❌</span></p>' >> "$REPORT_FILE"
+    fi
+    
+    if command -v containerd >/dev/null 2>&1; then
+        containerd_version=$(containerd --version 2>/dev/null)
+        echo "<p><strong>Containerd:</strong> <span class=\"status success\">$containerd_version ✅</span></p>" >> "$REPORT_FILE"
+    else
+        echo '<p><strong>Containerd:</strong> <span class="status warning">未找到 ⚠️</span></p>' >> "$REPORT_FILE"
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # 数据目录位置检查
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>📂 数据目录位置检查</h3>' >> "$REPORT_FILE"
+    echo '<p>检查关键服务的数据目录是否位于推荐位置（避免/home目录）:</p>' >> "$REPORT_FILE"
+    
+    # 检查kubelet数据目录
+    kubelet_data_dir="/var/lib/kubelet"
+    if [ -d "$kubelet_data_dir" ]; then
+        if [[ "$kubelet_data_dir" == /home/* ]]; then
+            echo "<p><strong>kubelet数据目录:</strong> <span class=\"status warning\">$kubelet_data_dir (位于/home目录，建议迁移) ⚠️</span></p>" >> "$REPORT_FILE"
+        else
+            echo "<p><strong>kubelet数据目录:</strong> <span class=\"status success\">$kubelet_data_dir ✅</span></p>" >> "$REPORT_FILE"
+        fi
+    else
+        echo '<p><strong>kubelet数据目录:</strong> <span class="status error">未找到 ❌</span></p>' >> "$REPORT_FILE"
+    fi
+    
+    # 检查containerd数据目录
+    if command -v containerd >/dev/null 2>&1; then
+        containerd_data_dir="/var/lib/containerd"
+        if [ -d "$containerd_data_dir" ]; then
+            if [[ "$containerd_data_dir" == /home/* ]]; then
+                echo "<p><strong>containerd数据目录:</strong> <span class=\"status warning\">$containerd_data_dir (位于/home目录，建议迁移) ⚠️</span></p>" >> "$REPORT_FILE"
+            else
+                echo "<p><strong>containerd数据目录:</strong> <span class=\"status success\">$containerd_data_dir ✅</span></p>" >> "$REPORT_FILE"
+            fi
+        else
+            echo '<p><strong>containerd数据目录:</strong> <span class="status error">未找到 ❌</span></p>' >> "$REPORT_FILE"
+        fi
+    fi
+    
+    # 检查docker数据目录
+    if command -v docker >/dev/null 2>&1; then
+        docker_data_dir=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "/var/lib/docker")
+        if [ -n "$docker_data_dir" ] && [ -d "$docker_data_dir" ]; then
+            if [[ "$docker_data_dir" == /home/* ]]; then
+                echo "<p><strong>Docker数据目录:</strong> <span class=\"status warning\">$docker_data_dir (位于/home目录，建议迁移) ⚠️</span></p>" >> "$REPORT_FILE"
+            else
+                echo "<p><strong>Docker数据目录:</strong> <span class=\"status success\">$docker_data_dir ✅</span></p>" >> "$REPORT_FILE"
+            fi
+        else
+            echo '<p><strong>Docker数据目录:</strong> <span class="status error">未找到或Docker未运行 ❌</span></p>' >> "$REPORT_FILE"
+        fi
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # Kubernetes节点状态
+    echo '<div class="section">' >> "$REPORT_FILE"
+    echo '<h2>☸️ Kubernetes节点状态</h2>' >> "$REPORT_FILE"
+    echo '<div class="command-output">' >> "$REPORT_FILE"
+    if command -v kubectl >/dev/null 2>&1; then
+        kubectl get nodes $(hostname) -o wide 2>/dev/null || echo "无法获取节点信息 - kubectl可能未配置" >> "$REPORT_FILE"
+    else
+        echo "此节点上kubectl不可用" >> "$REPORT_FILE"
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # 资源使用情况
+    echo '<div class="section">' >> "$REPORT_FILE"
+    echo '<h2>📈 当前资源使用情况</h2>' >> "$REPORT_FILE"
+    echo '<div class="command-output">' >> "$REPORT_FILE"
+    echo "=== CPU使用率 ===" >> "$REPORT_FILE"
+    top -bn1 | head -5 >> "$REPORT_FILE"
+    echo -e "\n=== 内存使用情况 ===" >> "$REPORT_FILE"
+    free -h >> "$REPORT_FILE"
+    echo -e "\n=== 磁盘使用情况 ===" >> "$REPORT_FILE"
+    df -h >> "$REPORT_FILE"
+    echo '</div>' >> "$REPORT_FILE"
+    echo '</div>' >> "$REPORT_FILE"
+    
+    # 页脚
+    cat >> "$REPORT_FILE" << 'EOF'
+        </div>
+        <div class="footer">
+            <p>🔧 CPU Worker节点健康检查完成于 $(date)</p>
+            <p>由Kubernetes集群检查工具生成</p>
+        </div>
+    </div>
+</body>
+</html>
+EOF
+
+else
+    # 文本格式输出
+    {
+        echo "=== CPU Worker节点健康检查报告 ==="
+        echo "主机名: $(hostname)"
+        echo "时间: $(date)"
+        echo "操作系统: $(lsb_release -d 2>/dev/null | cut -f2 || cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
+        echo "内核版本: $(uname -r)"
+        echo "系统架构: $(uname -m)"
+        echo ""
+        
+        echo "=== 系统配置检查 ==="
+        # Cgroup检查
+        if [ -d /sys/fs/cgroup/unified ]; then
+            echo "✅ Cgroup: v2"
+        elif [ -d /sys/fs/cgroup/memory ]; then
+            echo "⚠️ Cgroup: v1 (建议升级到v2)"
+        else
+            echo "❌ Cgroup: 未知"
+        fi
+        
+        # 防火墙检查
+        if systemctl is-active --quiet firewalld; then
+            echo "❌ Firewalld: 运行中 (应关闭)"
+        else
+            echo "✅ Firewalld: 已关闭"
+        fi
+        
+        if systemctl is-active --quiet ufw; then
+            echo "❌ UFW: 运行中 (应关闭)"
+        else
+            echo "✅ UFW: 已关闭"
+        fi
+        
+        # SELinux检查
+        if command -v getenforce >/dev/null 2>&1; then
+            selinux_status=$(getenforce 2>/dev/null)
+            if [ "$selinux_status" = "Disabled" ]; then
+                echo "✅ SELinux: 已禁用"
+            else
+                echo "❌ SELinux: $selinux_status (应禁用)"
+            fi
+        else
+            echo "✅ SELinux: 未安装"
+        fi
+        
+        # Swap检查
+        swap_info=$(swapon --show 2>/dev/null)
+        if [ -z "$swap_info" ]; then
+            echo "✅ Swap: 已禁用"
+        else
+            echo "❌ Swap: 启用中 (应禁用)"
+        fi
+        
+        # 时区检查
+        current_timezone=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "unknown")
+        if [ "$current_timezone" = "Asia/Shanghai" ]; then
+            echo "✅ 时区: Asia/Shanghai"
+        else
+            echo "❌ 时区: $current_timezone (建议设置为Asia/Shanghai)"
+        fi
+        
+        # 时间同步检查
+        if systemctl is-active --quiet chronyd; then
+            echo "✅ 时间同步: Chronyd运行中"
+        elif systemctl is-active --quiet ntp; then
+            echo "✅ 时间同步: NTP运行中"
+        else
+            echo "❌ 时间同步: 未配置"
+        fi
+        echo ""
+        
+        echo "=== 数据目录位置检查 ==="
+        # 检查 kubelet 数据目录
+        kubelet_data_dir="/var/lib/kubelet"
+        if [ -d "$kubelet_data_dir" ]; then
+            if echo "$kubelet_data_dir" | grep -q "^/home"; then
+                echo "⚠️ kubelet数据目录: $kubelet_data_dir (位于/home下，建议迁移)"
+            else
+                echo "✅ kubelet数据目录: $kubelet_data_dir"
+            fi
+        else
+            echo "❌ kubelet数据目录: 未找到"
+        fi
+        
+        # 检查 containerd 数据目录
+        containerd_data_dir="/var/lib/containerd"
+        if [ -d "$containerd_data_dir" ]; then
+            if echo "$containerd_data_dir" | grep -q "^/home"; then
+                echo "⚠️ containerd数据目录: $containerd_data_dir (位于/home下，建议迁移)"
+            else
+                echo "✅ containerd数据目录: $containerd_data_dir"
+            fi
+        else
+            echo "❌ containerd数据目录: 未找到"
+        fi
+        
+        # 检查 docker 数据目录
+        if command -v docker >/dev/null 2>&1 && systemctl is-active --quiet docker; then
+            docker_data_dir=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "/var/lib/docker")
+            if [ -d "$docker_data_dir" ]; then
+                if echo "$docker_data_dir" | grep -q "^/home"; then
+                    echo "⚠️ docker数据目录: $docker_data_dir (位于/home下，建议迁移)"
+                else
+                    echo "✅ docker数据目录: $docker_data_dir"
+                fi
+            else
+                echo "❌ docker数据目录: $docker_data_dir 不存在"
+            fi
+        else
+            echo "❌ docker数据目录: docker未运行或未安装"
+        fi
+        echo ""
+        
+        echo "=== Kubernetes软件包 ==="
+        if command -v kubelet >/dev/null 2>&1; then
+            kubelet_version=$(kubelet --version 2>/dev/null | awk '{print $2}')
+            echo "✅ kubelet: $kubelet_version"
+        else
+            echo "❌ kubelet: 未安装"
+        fi
+        
+        if command -v kubeadm >/dev/null 2>&1; then
+            kubeadm_version=$(kubeadm version -o short 2>/dev/null)
+            echo "✅ kubeadm: $kubeadm_version"
+        else
+            echo "❌ kubeadm: 未安装"
+        fi
+        
+        if command -v kubectl >/dev/null 2>&1; then
+            kubectl_version=$(kubectl version --client -o json 2>/dev/null | grep gitVersion | cut -d'"' -f4)
+            echo "✅ kubectl: $kubectl_version"
+        else
+            echo "⚠️ kubectl: 未安装"
+        fi
+        echo ""
+        
+        echo "=== 容器运行时 ==="
+        if command -v docker >/dev/null 2>&1; then
+            docker_version=$(docker --version 2>/dev/null)
+            echo "✅ Docker: $docker_version"
+            if systemctl is-active --quiet docker; then
+                echo "✅ Docker服务: 运行中"
+            else
+                echo "❌ Docker服务: 未运行"
+            fi
+        else
+            echo "❌ Docker: 未安装"
+        fi
+        
+        if command -v containerd >/dev/null 2>&1; then
+            containerd_version=$(containerd --version 2>/dev/null)
+            echo "✅ Containerd: $containerd_version"
+        else
+            echo "⚠️ Containerd: 未找到"
+        fi
+        echo ""
+        
+        echo "=== 系统资源 ==="
+        echo "CPU核心数: $(nproc)"
+        echo "CPU型号: $(grep -m1 'model name' /proc/cpuinfo | cut -d':' -f2 | xargs)"
+        echo "总内存: $(free -h | awk '/^Mem:/ {print $2}')"
+        echo "可用内存: $(free -h | awk '/^Mem:/ {print $7}')"
+        echo ""
+        echo "检查完成时间: $(date)"
+    } > "$REPORT_FILE"
+fi
+
+echo "✅ CPU Worker节点健康检查完成！"
+echo "📄 报告已保存到: $REPORT_FILE"

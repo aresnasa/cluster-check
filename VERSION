@@ -1,0 +1,55 @@
+# Kubernetes Cluster Check Tool
+# Version: 2.2.0
+# Build Date: 2025-05-27
+# Author: Auto-generated
+
+VERSION="2.2.0"
+BUILD_DATE="2025-05-27"
+DESCRIPTION="Advanced Kubernetes cluster health check tool with enhanced system configuration checks, etcd monitoring, and comprehensive GPU support"
+
+# Features in this version:
+# - Master节点etcd完整检查 (NEW in v2.1)
+# - Worker节点系统配置全面检查 (NEW in v2.1)  
+# - Cgroup版本检测和建议 (NEW in v2.1)
+# - 防火墙和SELinux状态验证 (NEW in v2.1)
+# - Swap和时区配置检查 (NEW in v2.1)
+# - Kubernetes内核参数验证 (NEW in v2.1)
+# - K8s软件包版本检查 (NEW in v2.1)
+# - NVIDIA内核模块检查 (NEW in v2.1)
+# - 完整文本格式输出支持 (NEW in v2.1)
+# - DCGM (NVIDIA Data Center GPU Manager) monitoring
+# - HTML表格报告系统
+# - 统一检查和报告生成
+# - Etcd version and status check
+# - Kernel version and compatibility check 
+# - Node labels and taints inspection
+# - Prometheus monitoring stack check
+# - NVIDIA GPU operator and driver check
+# - Ansible batch execution support
+# - Comprehensive logging and reporting
+# - 中文本地化支持
+
+# Major improvements in v2.1:
+# - Enhanced Master node with comprehensive etcd monitoring
+# - Complete Worker node system configuration validation
+# - Added critical Kubernetes system parameter checks
+# - Improved NVIDIA GPU kernel module detection
+# - Full text format output support for all node types
+# - Cleaned up project structure with better documentation
+# - Fixed all script syntax issues and enhanced error handling
+
+# Major improvements in v2.0:
+# - Added comprehensive DCGM GPU monitoring
+# - Redesigned HTML table-based reporting system
+# - Fixed Ansible template truncation issues
+# - Cleaned up project file structure
+# - Enhanced GPU health monitoring capabilities
+
+# Dependencies:
+# - kubectl (required)
+# - jq (required)
+# - ansible (for batch execution)
+
+# Supported Kubernetes versions: 1.20+
+# Supported OS: Linux (Ubuntu, RHEL, CentOS)
+# Supported Architectures: amd64, arm64

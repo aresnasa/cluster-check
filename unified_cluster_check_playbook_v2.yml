@@ -1,0 +1,592 @@
+---
+# ===========================================
+# Kubernetes集群健康检查工具 - 统一Playbook v2.0
+# 功能: Master节点 + CPU Worker节点 + GPU Worker节点 (含DCGM监控)
+# 特点: copy本地模板 -> 远程执行 -> 结果回传 -> 本地汇总
+# ===========================================
+
+# ===========================================
+# Play 1: Master节点检查
+# ===========================================
+- name: "统一Kubernetes集群健康检查 - Master节点"
+  hosts: k8s_masters:k8s_masters_demo
+  gather_facts: yes
+  serial: 3
+  vars:
+    check_script_path: "{{ remote_script_path }}"
+    results_dir: "{{ remote_results_dir }}"
+    template_path: "{{ remote_template_path }}"
+    
+  tasks:
+    - name: "在Master节点创建结果目录"
+      file:
+        path: "{{ results_dir }}"
+        state: directory
+        mode: '0755'
+      tags:
+        - p1_master_setup
+        - master_create_dir
+        - setup
+
+    - name: "复制Master节点检查脚本模板到远程"
+      copy:
+        src: "./templates/master_check_script.sh.j2"
+        dest: "{{ template_path }}"
+        mode: '0644'
+      tags:
+        - p1_master_setup
+        - master_copy_template
+        - setup
+
+    - name: "在远程节点处理模板并生成检查脚本"
+      shell: |
+        # 替换Jinja2模板变量
+        sed "s/{{ ansible_hostname }}/{{ ansible_hostname }}/g; \
+             s|{{ results_dir }}|{{ results_dir }}|g; \
+             s/{{ node_name | default(ansible_hostname) }}/{{ node_name | default(ansible_hostname) }}/g" \
+        "{{ template_path }}" > "{{ check_script_path }}"
+        chmod +x "{{ check_script_path }}"
+        # 清理模板文件
+        rm -f "{{ template_path }}"
+      tags:
+        - p1_master_setup
+        - master_process_template
+        - setup
+
+    - name: "执行Master节点健康检查并生成报告"
+      shell: |
+        export OUTPUT_FORMAT="{{ output_format | default('html') }}"
+        export NODE_TYPE=master
+        export NODE_NAME="{{ node_name | default(ansible_hostname) }}"
+        "{{ check_script_path }}"
+      register: master_check_result
+      ignore_errors: yes
+      tags:
+        - p1_master_check
+        - master_execute_check
+        - check
+
+    - name: "显示Master节点检查结果"
+      debug:
+        msg: "{{ master_check_result.stdout_lines }}"
+      when: master_check_result.stdout_lines is defined
+      tags:
+        - p1_master_check
+        - master_show_result
+        - check
+
+    - name: "查找生成的Master节点报告文件"
+      find:
+        paths: "{{ results_dir }}"
+        patterns: 
+          - "*master*check*.html"
+          - "*master*check*.txt"
+        age: "-1h"
+      register: master_report_files
+      tags:
+        - p1_master_fetch
+        - master_find_reports
+        - fetch
+
+    - name: "获取Master节点检查结果"
+      fetch:
+        src: "{{ item.path }}"
+        dest: "{{ local_results_dir }}/{{ inventory_hostname }}_{{ item.path | basename }}"
+        flat: yes
+      with_items: "{{ master_report_files.files }}"
+      when: master_report_files.files | length > 0
+      ignore_errors: yes
+      tags:
+        - p1_master_fetch
+        - master_fetch_results
+        - fetch
+
+    - name: "清理Master节点的临时文件"
+      shell: |
+        # 清理远程生成的HTML报告文件
+        if [ -d "{{ results_dir }}" ]; then
+          echo "清理远程临时HTML文件..."
+          rm -f {{ results_dir }}/*master*check*.html
+          echo "Master节点HTML文件清理完成"
+        fi
+        
+        # 清理远程检查脚本
+        if [ -f "{{ check_script_path }}" ]; then
+          echo "清理远程检查脚本..."
+          rm -f "{{ check_script_path }}"
+          echo "Master节点检查脚本清理完成"
+        fi
+        
+        echo "Master节点临时文件清理完成"
+      when: cleanup_temp_files | default(true) | bool
+      ignore_errors: yes
+      tags:
+        - p1_master_cleanup
+        - master_cleanup_temp_files
+        - cleanup
+
+# ===========================================
+# Play 2: CPU Worker节点检查
+# ===========================================
+- name: "统一Kubernetes集群健康检查 - CPU Worker节点"
+  hosts: k8s_cpu_workers:k8s_cpu_workers_demo
+  gather_facts: yes
+  serial: 5
+  vars:
+    check_script_path: "{{ remote_script_path }}"
+    results_dir: "{{ remote_results_dir }}"
+    template_path: "{{ remote_template_path }}"
+    
+  tasks:
+    - name: "在CPU Worker节点创建结果目录"
+      file:
+        path: "{{ results_dir }}"
+        state: directory
+        mode: '0755'
+      tags:
+        - p2_cpu_worker_setup
+        - cpu_worker_create_dir
+        - setup
+
+    - name: "复制CPU Worker节点检查脚本模板到远程"
+      copy:
+        src: "./templates/cpu_worker_check_script.sh.j2"
+        dest: "{{ template_path }}"
+        mode: '0644'
+      tags:
+        - p2_cpu_worker_setup
+        - cpu_worker_copy_template
+        - setup
+
+    - name: "在远程节点处理模板并生成检查脚本"
+      shell: |
+        # 替换Jinja2模板变量
+        sed "s/{{ ansible_hostname }}/{{ ansible_hostname }}/g; \
+             s|{{ results_dir }}|{{ results_dir }}|g; \
+             s/{{ node_name | default(ansible_hostname) }}/{{ node_name | default(ansible_hostname) }}/g" \
+        "{{ template_path }}" > "{{ check_script_path }}"
+        chmod +x "{{ check_script_path }}"
+        # 清理模板文件
+        rm -f "{{ template_path }}"
+      tags:
+        - p2_cpu_worker_setup
+        - cpu_worker_process_template
+        - setup
+
+    - name: "执行CPU Worker节点健康检查并生成报告"
+      shell: |
+        export OUTPUT_FORMAT="{{ output_format | default('html') }}"
+        export NODE_TYPE=cpu_worker
+        export NODE_NAME="{{ node_name | default(ansible_hostname) }}"
+        "{{ check_script_path }}"
+      register: cpu_worker_check_result
+      ignore_errors: yes
+      tags:
+        - p2_cpu_worker_check
+        - cpu_worker_execute_check
+        - check
+
+    - name: "显示CPU Worker节点检查结果"
+      debug:
+        msg: "{{ cpu_worker_check_result.stdout_lines }}"
+      when: cpu_worker_check_result.stdout_lines is defined
+      tags:
+        - p2_cpu_worker_check
+        - cpu_worker_show_result
+        - check
+
+    - name: "查找生成的CPU Worker节点报告文件"
+      find:
+        paths: "{{ results_dir }}"
+        patterns: 
+          - "*cpu_worker*check*.html"
+          - "*cpu_worker*check*.txt"
+        age: "-1h"
+      register: cpu_worker_report_files
+      tags:
+        - p2_cpu_worker_fetch
+        - cpu_worker_find_reports
+        - fetch
+
+    - name: "获取CPU Worker节点检查结果"
+      fetch:
+        src: "{{ item.path }}"
+        dest: "{{ local_results_dir }}/{{ inventory_hostname }}_{{ item.path | basename }}"
+        flat: yes
+      with_items: "{{ cpu_worker_report_files.files }}"
+      when: cpu_worker_report_files.files | length > 0
+      ignore_errors: yes
+      tags:
+        - p2_cpu_worker_fetch
+        - cpu_worker_fetch_results
+        - fetch
+
+    - name: "清理CPU Worker节点的临时文件"
+      shell: |
+        # 清理远程生成的HTML报告文件
+        if [ -d "{{ results_dir }}" ]; then
+          echo "清理远程临时HTML文件..."
+          rm -f {{ results_dir }}/*cpu_worker*check*.html
+          echo "CPU Worker节点HTML文件清理完成"
+        fi
+        
+        # 清理远程检查脚本
+        if [ -f "{{ check_script_path }}" ]; then
+          echo "清理远程检查脚本..."
+          rm -f "{{ check_script_path }}"
+          echo "CPU Worker节点检查脚本清理完成"
+        fi
+        
+        echo "CPU Worker节点临时文件清理完成"
+      when: cleanup_temp_files | default(true) | bool
+      ignore_errors: yes
+      tags:
+        - p2_cpu_worker_cleanup
+        - cpu_worker_cleanup_temp_files
+        - cleanup
+
+# ===========================================
+# Play 3: GPU Worker节点检查 (含DCGM监控)
+# ===========================================
+- name: "统一Kubernetes集群健康检查 - GPU Worker节点"
+  hosts: k8s_gpu_workers:k8s_gpu_workers_demo
+  gather_facts: yes
+  serial: 3
+  vars:
+    check_script_path: "{{ remote_script_path }}"
+    results_dir: "{{ remote_results_dir }}"
+    template_path: "{{ remote_template_path }}"
+    
+  tasks:
+    - name: "在GPU Worker节点创建结果目录"
+      file:
+        path: "{{ results_dir }}"
+        state: directory
+        mode: '0755'
+      tags:
+        - p3_gpu_worker_setup
+        - gpu_worker_create_dir
+        - setup
+
+    - name: "复制GPU Worker节点检查脚本模板到远程"
+      copy:
+        src: "./templates/gpu_worker_check_script.sh.j2"
+        dest: "{{ template_path }}"
+        mode: '0644'
+      tags:
+        - p3_gpu_worker_setup
+        - gpu_worker_copy_template
+        - setup
+
+    - name: "在远程节点处理模板并生成检查脚本"
+      shell: |
+        # 替换Jinja2模板变量
+        sed "s/{{ ansible_hostname }}/{{ ansible_hostname }}/g; \
+             s|{{ results_dir }}|{{ results_dir }}|g; \
+             s/{{ node_name | default(ansible_hostname) }}/{{ node_name | default(ansible_hostname) }}/g; \
+             s/{{ gpu_type | default('unknown') }}/{{ gpu_type | default('unknown') }}/g" \
+        "{{ template_path }}" > "{{ check_script_path }}"
+        chmod +x "{{ check_script_path }}"
+        # 清理模板文件
+        rm -f "{{ template_path }}"
+      tags:
+        - p3_gpu_worker_setup
+        - gpu_worker_process_template
+        - setup
+
+    - name: "执行GPU Worker节点健康检查并生成报告 (含DCGM监控)"
+      shell: |
+        export OUTPUT_FORMAT="{{ output_format | default('html') }}"
+        export NODE_TYPE=gpu_worker
+        export NODE_NAME="{{ node_name | default(ansible_hostname) }}"
+        export GPU_TYPE="{{ gpu_type | default('unknown') }}"
+        "{{ check_script_path }}"
+      register: gpu_worker_check_result
+      ignore_errors: yes
+      tags:
+        - p3_gpu_worker_check
+        - gpu_worker_execute_check
+        - check
+
+    - name: "显示GPU Worker节点检查结果"
+      debug:
+        msg: "{{ gpu_worker_check_result.stdout_lines }}"
+      when: gpu_worker_check_result.stdout_lines is defined
+      tags:
+        - p3_gpu_worker_check
+        - gpu_worker_show_result
+        - check
+
+    - name: "查找生成的GPU Worker节点报告文件"
+      find:
+        paths: "{{ results_dir }}"
+        patterns: 
+          - "*gpu_worker*check*.html"
+          - "*gpu_worker*check*.txt"
+        age: "-1h"
+      register: gpu_worker_report_files
+      tags:
+        - p3_gpu_worker_fetch
+        - gpu_worker_find_reports
+        - fetch
+
+    - name: "获取GPU Worker节点检查结果"
+      fetch:
+        src: "{{ item.path }}"
+        dest: "{{ local_results_dir }}/{{ inventory_hostname }}_{{ item.path | basename }}"
+        flat: yes
+      with_items: "{{ gpu_worker_report_files.files }}"
+      when: gpu_worker_report_files.files | length > 0
+      ignore_errors: yes
+      tags:
+        - p3_gpu_worker_fetch
+        - gpu_worker_fetch_results
+        - fetch
+
+    - name: "清理GPU Worker节点的临时文件"
+      shell: |
+        # 清理远程生成的HTML报告文件
+        if [ -d "{{ results_dir }}" ]; then
+          echo "清理远程临时HTML文件..."
+          rm -f {{ results_dir }}/*gpu_worker*check*.html
+          echo "GPU Worker节点HTML文件清理完成"
+        fi
+        
+        # 清理远程检查脚本
+        if [ -f "{{ check_script_path }}" ]; then
+          echo "清理远程检查脚本..."
+          rm -f "{{ check_script_path }}"
+          echo "GPU Worker节点检查脚本清理完成"
+        fi
+        
+        echo "GPU Worker节点临时文件清理完成"
+      when: cleanup_temp_files | default(true) | bool
+      ignore_errors: yes
+      tags:
+        - p3_gpu_worker_cleanup
+        - gpu_worker_cleanup_temp_files
+        - cleanup
+
+# ===========================================
+# Play 4: 本地汇总集群检查报告
+# ===========================================
+- name: "本地汇总集群检查报告"
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    local_results_dir: "./cluster_check_results"
+    local_report_dir: "./report"
+    
+  tasks:
+    - name: "创建本地结果目录"
+      file:
+        path: "{{ local_results_dir }}"
+        state: directory
+        mode: '0755'
+      tags:
+        - p4_local_setup
+        - local_create_results_dir
+        - setup
+        - report
+
+    - name: "创建本地报告目录"
+      file:
+        path: "{{ local_report_dir }}"
+        state: directory
+        mode: '0755'
+      tags:
+        - p4_local_setup
+        - local_create_report_dir
+        - setup
+        - report
+
+    - name: "检查收集的检查结果"
+      find:
+        paths: "{{ local_results_dir }}"
+        patterns: "*.html"
+      register: collected_reports
+      tags:
+        - p4_collect_reports
+        - local_find_collected_reports
+        - collect
+        - report
+
+    - name: "显示收集到的报告信息"
+      debug:
+        msg: "收集到 {{ collected_reports.files | length }} 个节点检查报告"
+      tags:
+        - p4_collect_reports
+        - local_show_collected_count
+        - collect
+        - report
+
+    - name: "分类统计收集的报告"
+      shell: |
+        echo "=== 报告文件统计 ==="
+        echo "Master节点报告: $(ls {{ local_results_dir }}/*master*check*.html 2>/dev/null | wc -l) 个"
+        echo "CPU Worker报告: $(ls {{ local_results_dir }}/*cpu_worker*check*.html 2>/dev/null | wc -l) 个"
+        echo "GPU Worker报告: $(ls {{ local_results_dir }}/*gpu_worker*check*.html 2>/dev/null | wc -l) 个"
+        echo "=== 文件列表 ==="
+        ls -la {{ local_results_dir }}/*.html 2>/dev/null || echo "没有找到HTML报告文件"
+      register: report_stats
+      tags:
+        - p4_collect_reports
+        - local_classify_reports
+        - collect
+        - report
+
+    - name: "显示报告统计信息"
+      debug:
+        msg: "{{ report_stats.stdout_lines }}"
+      tags:
+        - p4_collect_reports
+        - local_show_stats
+        - collect
+        - report
+
+    - name: "复制报告到report目录并重命名"
+      shell: |
+        if [ -d "{{ local_results_dir }}" ] && [ "$(ls -A {{ local_results_dir }}/*.html 2>/dev/null)" ]; then
+          echo "复制报告到report目录..."
+          for file in {{ local_results_dir }}/*.html; do
+            if [[ -f "$file" ]]; then
+              # 提取节点类型并重命名
+              filename=$(basename "$file")
+              if [[ $filename == *"master"* ]]; then
+                new_name="MASTER_$(echo $filename | sed 's/.*_master_check_//' | sed 's/.html$//')_$(date +%Y%m%d_%H%M%S).html"
+              elif [[ $filename == *"cpu_worker"* ]]; then
+                new_name="CPU_WORKER_$(echo $filename | sed 's/.*_cpu_worker_check_//' | sed 's/.html$//')_$(date +%Y%m%d_%H%M%S).html"
+              elif [[ $filename == *"gpu_worker"* ]]; then
+                new_name="GPU_WORKER_$(echo $filename | sed 's/.*_gpu_worker_check_//' | sed 's/.html$//')_$(date +%Y%m%d_%H%M%S).html"
+              else
+                new_name="$(basename $file)"
+              fi
+              cp "$file" "{{ local_report_dir }}/$new_name"
+              echo "复制: $filename -> $new_name"
+            fi
+          done
+          echo "报告复制完成"
+        else
+          echo "警告: 未找到检查结果文件"
+        fi
+      register: copy_reports_result
+      tags:
+        - p4_process_reports
+        - local_copy_rename_reports
+        - process
+        - report
+
+    - name: "显示报告复制结果"
+      debug:
+        msg: "{{ copy_reports_result.stdout_lines }}"
+      tags:
+        - p4_process_reports
+        - local_show_copy_result
+        - process
+        - report
+
+    - name: "生成统一HTML表格报告"
+      shell: |
+        if [ -x "./generate_unified_report.sh" ]; then
+          echo "生成统一报告..."
+          ./generate_unified_report.sh "{{ local_report_dir }}"
+          if [ $? -eq 0 ]; then
+            echo "✅ 统一报告生成成功"
+          else
+            echo "⚠️  统一报告生成失败"
+          fi
+        else
+          echo "⚠️  统一报告生成脚本不存在或无执行权限"
+        fi
+      register: unified_report_result
+      tags:
+        - p4_generate_unified
+        - local_generate_unified_report
+        - generate
+        - report
+
+    - name: "生成简化Markdown报告"
+      shell: |
+        if [ "{{ generate_markdown | default(false) | bool }}" = "True" ]; then
+          if [ -x "./generate_simplified_markdown_report.sh" ]; then
+            echo "生成简化Markdown报告..."
+            ./generate_simplified_markdown_report.sh "{{ local_report_dir }}"
+            if [ $? -eq 0 ]; then
+              echo "✅ 简化Markdown报告生成成功"
+            else
+              echo "⚠️  简化Markdown报告生成失败"
+            fi
+          else
+            echo "⚠️  简化Markdown报告生成脚本不存在或无执行权限"
+          fi
+        else
+          echo "跳过Markdown报告生成 (generate_markdown=false)"
+        fi
+      register: markdown_report_result
+      tags:
+        - p4_generate_markdown
+        - local_generate_markdown_report
+        - generate
+        - report
+      register: unified_report_result
+      tags:
+        - p4_generate_unified
+        - local_generate_unified_report
+        - generate
+        - report
+
+    - name: "显示统一报告生成结果"
+      debug:
+        msg: "{{ unified_report_result.stdout_lines }}"
+      tags:
+        - p4_generate_unified
+        - local_show_unified_result
+        - generate
+        - report
+
+    - name: "最终报告统计和清理"
+      shell: |
+        echo "=== 最终报告统计 ==="
+        if [ -d "{{ local_report_dir }}" ]; then
+          echo "Master节点报告: $(ls {{ local_report_dir }}/MASTER_*.html 2>/dev/null | wc -l) 个"
+          echo "CPU Worker报告: $(ls {{ local_report_dir }}/CPU_WORKER_*.html 2>/dev/null | wc -l) 个"
+          echo "GPU Worker报告: $(ls {{ local_report_dir }}/GPU_WORKER_*.html 2>/dev/null | wc -l) 个"
+          echo "统一汇总报告: $(ls {{ local_report_dir }}/unified_cluster_report.html 2>/dev/null | wc -l) 个"
+        fi
+        
+        # 可选：清理临时的远程脚本文件（保留检查结果）
+        echo "保留详细报告，仅显示汇总报告位置"
+        if [ -f "{{ local_report_dir }}/unified_cluster_report.html" ]; then
+          echo "✅ 统一汇总报告已生成: {{ local_report_dir }}/unified_cluster_report.html"
+        else
+          echo "⚠️  统一汇总报告生成失败"
+        fi
+      register: final_stats
+      tags:
+        - p4_finalize
+        - local_final_stats
+        - finalize
+        - report
+
+    - name: "显示最终统计结果"
+      debug:
+        msg: "{{ final_stats.stdout_lines }}"
+      tags:
+        - p4_finalize
+        - local_show_final_stats
+        - finalize
+        - report
+
+    - name: "报告完成信息"
+      debug:
+        msg:
+          - "🎉 集群健康检查完成!"
+          - "📊 详细报告位置: {{ local_report_dir }}/"
+          - "📋 统一汇总报告: {{ local_report_dir }}/unified_cluster_report.html"
+          - "💡 建议: 主要查看统一汇总报告，需要详细信息时查看单个节点报告"
+      tags:
+        - p4_finalize
+        - local_completion_info
+        - finalize
+        - report

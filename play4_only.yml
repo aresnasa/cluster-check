@@ -1,0 +1,200 @@
+---
+# ===========================================
+# Kubernetes集群健康检查工具 - 单独运行Play 4
+# 功能: 仅运行本地汇总集群检查报告
+# 使用: ansible-playbook -i inventory_unified.ini play4_only.yml -v
+# ===========================================
+
+# ===========================================
+# Play 4: 本地汇总集群检查报告 (独立版本)
+# ===========================================
+- name: "本地汇总集群检查报告 (独立运行)"
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    local_results_dir: "./cluster_check_results"
+    local_report_dir: "./report"
+    
+  tasks:
+    - name: "创建本地结果目录"
+      file:
+        path: "{{ local_results_dir }}"
+        state: directory
+        mode: '0755'
+      tags:
+        - p4_only_setup
+        - local_create_results_dir
+        - setup
+        - report
+
+    - name: "创建本地报告目录"
+      file:
+        path: "{{ local_report_dir }}"
+        state: directory
+        mode: '0755'
+      tags:
+        - p4_only_setup
+        - local_create_report_dir
+        - setup
+        - report
+
+    - name: "检查收集的检查结果"
+      find:
+        paths: "{{ local_results_dir }}"
+        patterns: "*.html"
+      register: collected_reports
+      tags:
+        - p4_only_collect
+        - local_find_collected_reports
+        - collect
+        - report
+
+    - name: "显示收集到的报告信息"
+      debug:
+        msg: "收集到 {{ collected_reports.files | length }} 个节点检查报告"
+      tags:
+        - p4_only_collect
+        - local_show_collected_count
+        - collect
+        - report
+
+    - name: "分类统计收集的报告"
+      shell: |
+        echo "=== 报告文件统计 ==="
+        echo "Master节点报告: $(ls {{ local_results_dir }}/*master*check*.html 2>/dev/null | wc -l) 个"
+        echo "CPU Worker报告: $(ls {{ local_results_dir }}/*cpu_worker*check*.html 2>/dev/null | wc -l) 个"
+        echo "GPU Worker报告: $(ls {{ local_results_dir }}/*gpu_worker*check*.html 2>/dev/null | wc -l) 个"
+        echo "=== 文件列表 ==="
+        ls -la {{ local_results_dir }}/*.html 2>/dev/null || echo "没有找到HTML报告文件"
+      register: report_stats
+      tags:
+        - p4_only_collect
+        - local_classify_reports
+        - collect
+        - report
+
+    - name: "显示报告统计信息"
+      debug:
+        msg: "{{ report_stats.stdout_lines }}"
+      tags:
+        - p4_only_collect
+        - local_show_stats
+        - collect
+        - report
+
+    - name: "复制报告到report目录并重命名"
+      shell: |
+        if [ -d "{{ local_results_dir }}" ] && [ "$(ls -A {{ local_results_dir }}/*.html 2>/dev/null)" ]; then
+          echo "复制报告到report目录..."
+          for file in {{ local_results_dir }}/*.html; do
+            if [[ -f "$file" ]]; then
+              # 提取节点类型并重命名
+              filename=$(basename "$file")
+              if [[ $filename == *"master"* ]]; then
+                new_name="MASTER_$(echo $filename | sed 's/.*_master_check_//' | sed 's/.html$//')_$(date +%Y%m%d_%H%M%S).html"
+              elif [[ $filename == *"cpu_worker"* ]]; then
+                new_name="CPU_WORKER_$(echo $filename | sed 's/.*_cpu_worker_check_//' | sed 's/.html$//')_$(date +%Y%m%d_%H%M%S).html"
+              elif [[ $filename == *"gpu_worker"* ]]; then
+                new_name="GPU_WORKER_$(echo $filename | sed 's/.*_gpu_worker_check_//' | sed 's/.html$//')_$(date +%Y%m%d_%H%M%S).html"
+              else
+                new_name="$(basename $file)"
+              fi
+              cp "$file" "{{ local_report_dir }}/$new_name"
+              echo "复制: $filename -> $new_name"
+            fi
+          done
+          echo "报告复制完成"
+        else
+          echo "警告: 未找到检查结果文件"
+        fi
+      register: copy_reports_result
+      tags:
+        - p4_only_process
+        - local_copy_rename_reports
+        - process
+        - report
+
+    - name: "显示报告复制结果"
+      debug:
+        msg: "{{ copy_reports_result.stdout_lines }}"
+      tags:
+        - p4_only_process
+        - local_show_copy_result
+        - process
+        - report
+
+    - name: "生成统一HTML表格报告"
+      shell: |
+        if [ -x "./generate_unified_report.sh" ]; then
+          echo "生成统一报告..."
+          ./generate_unified_report.sh "{{ local_report_dir }}"
+          if [ $? -eq 0 ]; then
+            echo "✅ 统一报告生成成功"
+          else
+            echo "⚠️  统一报告生成失败"
+          fi
+        else
+          echo "⚠️  统一报告生成脚本不存在或无执行权限"
+        fi
+      register: unified_report_result
+      tags:
+        - p4_only_generate
+        - local_generate_unified_report
+        - generate
+        - report
+
+    - name: "显示统一报告生成结果"
+      debug:
+        msg: "{{ unified_report_result.stdout_lines }}"
+      tags:
+        - p4_only_generate
+        - local_show_unified_result
+        - generate
+        - report
+
+    - name: "最终报告统计和清理"
+      shell: |
+        echo "=== 最终报告统计 ==="
+        if [ -d "{{ local_report_dir }}" ]; then
+          echo "Master节点报告: $(ls {{ local_report_dir }}/MASTER_*.html 2>/dev/null | wc -l) 个"
+          echo "CPU Worker报告: $(ls {{ local_report_dir }}/CPU_WORKER_*.html 2>/dev/null | wc -l) 个"
+          echo "GPU Worker报告: $(ls {{ local_report_dir }}/GPU_WORKER_*.html 2>/dev/null | wc -l) 个"
+          echo "统一汇总报告: $(ls {{ local_report_dir }}/unified_cluster_report.html 2>/dev/null | wc -l) 个"
+        fi
+        
+        # 可选：清理临时的远程脚本文件（保留检查结果）
+        echo "保留详细报告，仅显示汇总报告位置"
+        if [ -f "{{ local_report_dir }}/unified_cluster_report.html" ]; then
+          echo "✅ 统一汇总报告已生成: {{ local_report_dir }}/unified_cluster_report.html"
+        else
+          echo "⚠️  统一汇总报告生成失败"
+        fi
+      register: final_stats
+      tags:
+        - p4_only_finalize
+        - local_final_stats
+        - finalize
+        - report
+
+    - name: "显示最终统计结果"
+      debug:
+        msg: "{{ final_stats.stdout_lines }}"
+      tags:
+        - p4_only_finalize
+        - local_show_final_stats
+        - finalize
+        - report
+
+    - name: "报告完成信息"
+      debug:
+        msg:
+          - "🎉 集群健康检查报告汇总完成!"
+          - "📊 详细报告位置: {{ local_report_dir }}/"
+          - "📋 统一汇总报告: {{ local_report_dir }}/unified_cluster_report.html"
+          - "💡 建议: 主要查看统一汇总报告，需要详细信息时查看单个节点报告"
+      tags:
+        - p4_only_finalize
+        - local_completion_info
+        - finalize
+        - report
