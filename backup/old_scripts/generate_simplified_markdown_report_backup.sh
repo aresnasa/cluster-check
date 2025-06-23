@@ -2,7 +2,7 @@
 
 # ===========================================
 # 简化版Markdown报告生成脚本
-# 功能：从HTML报告提取关键检查项的通过/失败状态，生成简洁的Markdown汇总报告
+# 功能：从HTML报告提取关键检查项的通过/失败状态，生成简洁的Markdown报告
 # 使用方法: ./generate_simplified_markdown_report.sh [源目录]
 # ===========================================
 
@@ -37,8 +37,8 @@ echo "📁 源目录: $SOURCE_DIR"
 echo "📁 输出目录: $REPORT_DIR" 
 echo "📄 找到 $html_files_count 个HTML报告文件"
 
-# 提取主要检查项状态的函数
-extract_status() {
+# 提取主要检查项状态的函数 (适配HTML报告格式)
+extract_main_status() {
     local report_file="$1"
     local check_type="$2"
     
@@ -106,18 +106,35 @@ extract_status() {
     esac
 }
 
-# 获取节点类型
-get_node_type() {
-    local hostname="$1"
+# 获取节点信息的函数
+get_node_info() {
+    local report_file="$1"
+    local info_type="$2"
     
-    # 基于主机名模式判断节点类型
-    if [[ "$hostname" =~ master|control ]]; then
-        echo "Master"
-    elif [[ "$hostname" =~ gpu ]]; then
-        echo "GPU Worker"
-    else
-        echo "CPU Worker"
-    fi
+    case "$info_type" in
+        "hostname")
+            # 从文件名中提取主机名
+            local filename=$(basename "$report_file" .html)
+            if [[ "$filename" =~ _check_report_ ]]; then
+                echo "$filename" | sed 's/.*_check_report_//'
+            else
+                echo "Unknown"
+            fi
+            ;;
+        "node_type")
+            # 基于文件名模式判断节点类型
+            if [[ "$report_file" =~ master ]]; then
+                echo "Master"
+            elif [[ "$report_file" =~ gpu ]]; then
+                echo "GPU Worker"
+            else
+                echo "CPU Worker"
+            fi
+            ;;
+        "check_time")
+            grep -o "时间: [^)]*" "$report_file" 2>/dev/null | cut -d' ' -f2- | head -1 || echo "Unknown"
+            ;;
+    esac
 }
 
 # 开始生成Markdown报告
@@ -127,7 +144,7 @@ cat > "$OUTPUT_FILE" << EOF
 # Kubernetes集群健康检查报告 (简化版)
 
 **生成时间**: $TIMESTAMP  
-**报告类型**: 汇总展示所有节点检查结果状态
+**报告类型**: 仅显示通过/失败状态的简化报告
 
 ---
 
@@ -143,41 +160,27 @@ healthy_nodes=0
 warning_nodes=0
 failed_nodes=0
 
-# 遍历所有报告文件
+# 处理每个HTML报告文件
 for report_file in "$SOURCE_DIR"/*.html; do
     if [[ -f "$report_file" ]]; then
-        # 提取主机名 - 从文件名中提取，保持完整格式
-        hostname=$(basename "$report_file" .html)
-        
-        # 清理主机名（移除前缀，保留完整的hostname格式）
-        if [[ "$hostname" =~ _check_report_ ]]; then
-            hostname=$(echo "$hostname" | sed 's/.*_check_report_//')
-        fi
+        # 提取主机名
+        hostname=$(get_node_info "$report_file" "hostname")
         
         # 跳过可能的统一报告文件
         if [[ "$hostname" == "unified_cluster_report" || "$hostname" == "cluster_report" ]]; then
             continue
         fi
         
-        # 如果hostname还是像20733这样的数字，尝试从HTML标题中提取
-        if [[ "$hostname" =~ ^[0-9]+$ ]]; then
-            # 从HTML文件的title标签中提取主机名
-            title_hostname=$(grep -o '<title>.*</title>' "$report_file" 2>/dev/null | sed 's/<title>.*- \([^<]*\)<\/title>/\1/' | tr -d ' ')
-            if [[ -n "$title_hostname" && "$title_hostname" != "$hostname" ]]; then
-                hostname="$title_hostname"
-            fi
-        fi
-        
         total_nodes=$((total_nodes + 1))
         
         # 获取节点类型
-        node_type=$(get_node_type "$hostname")
+        node_type=$(get_node_info "$report_file" "node_type")
         
         # 提取各项检查状态
-        system_status=$(extract_status "$report_file" "system")
-        k8s_status=$(extract_status "$report_file" "kubernetes")
-        gpu_status=$(extract_status "$report_file" "gpu")
-        resource_status=$(extract_status "$report_file" "resource")
+        system_status=$(extract_main_status "$report_file" "system")
+        k8s_status=$(extract_main_status "$report_file" "kubernetes")
+        gpu_status=$(extract_main_status "$report_file" "gpu")
+        resource_status=$(extract_main_status "$report_file" "resource")
         
         # 计算整体状态
         overall_status="✅"
@@ -204,7 +207,7 @@ cat >> "$OUTPUT_FILE" << EOF
 ## 📈 集群状态统计
 
 - **总节点数**: $total_nodes
-- **健康节点**: $healthy_nodes  
+- **健康节点**: $healthy_nodes
 - **警告节点**: $warning_nodes  
 - **异常节点**: $failed_nodes
 EOF
@@ -214,6 +217,12 @@ if [[ $total_nodes -gt 0 ]]; then
     health_rate=$(( (healthy_nodes * 100) / total_nodes ))
     echo "- **集群健康率**: ${health_rate}% ($healthy_nodes/$total_nodes)" >> "$OUTPUT_FILE"
 fi
+    fi
+done
+
+if [[ "$gpu_worker_found" == false ]]; then
+    echo "| - | - | - | - | - | - | - | - | - | - | - | - | - |" >> "$OUTPUT_FILE"
+fi
 
 # 添加图例说明
 cat >> "$OUTPUT_FILE" << 'EOF'
@@ -222,24 +231,32 @@ cat >> "$OUTPUT_FILE" << 'EOF'
 
 ## 📖 状态图例
 
-- ✅ **通过**: 检查项配置正确，状态良好
+- ✅ **通过**: 检查项配置正确
 - ❌ **失败**: 检查项存在问题，需要修复
 - ⚠️ **警告**: 检查项可能存在潜在问题
 - ❓ **未知**: 无法获取检查状态
-- **N/A**: 不适用（如CPU节点无GPU检查）
 
 ## 🔍 检查项说明
 
-### 主要检查项
-- **系统检查**: 防火墙、SELinux、Swap、时区、时间同步等基础系统配置
-- **Kubernetes**: kubelet、kubectl、kubeadm、容器运行时等K8s组件状态
-- **GPU/DCGM**: GPU驱动、DCGM监控工具状态（仅GPU节点）
-- **资源状态**: 磁盘空间、内存使用、数据目录位置等资源检查
+### 通用检查项
+- **防火墙**: firewalld和ufw应该关闭
+- **SELinux**: 应该禁用或未安装
+- **Swap**: 应该禁用
+- **时区**: 建议设置为Asia/Shanghai
+- **时间同步**: chronyd或ntp应该运行
+- **kubelet**: Kubernetes节点代理
+- **kubectl**: Kubernetes命令行工具
+- **kubeadm**: Kubernetes集群初始化工具
+- **容器运行时**: Docker或Containerd
+- **数据目录**: kubelet、containerd、docker数据目录不应位于/home
 
-### 节点类型
-- **Master**: Kubernetes控制平面节点
-- **CPU Worker**: CPU工作节点
-- **GPU Worker**: GPU工作节点
+### Master节点专用检查项
+- **K8s组件**: kube-apiserver, kube-controller-manager, kube-scheduler
+- **etcd**: 集群数据存储
+
+### GPU Worker节点专用检查项
+- **GPU**: NVIDIA驱动和工具
+- **DCGM**: GPU监控和管理工具
 
 ---
 
@@ -251,21 +268,8 @@ echo "✅ 简化Markdown报告生成完成"
 echo "📄 报告文件: $OUTPUT_FILE"
 echo ""
 echo "📋 报告摘要:"
-echo "   总节点数: $total_nodes"
-echo "   健康节点: $healthy_nodes"
-echo "   警告节点: $warning_nodes"
-echo "   异常节点: $failed_nodes"
-if [[ $total_nodes -gt 0 ]]; then
-    health_rate=$(( (healthy_nodes * 100) / total_nodes ))
-    echo "   集群健康率: ${health_rate}%"
-fi
+echo "   Master节点: $(grep -c master <<< "${all_reports[*]}")"
+echo "   CPU Worker节点: $(grep -c cpu_worker <<< "${all_reports[*]}")"
+echo "   GPU Worker节点: $(grep -c gpu_worker <<< "${all_reports[*]}")"
 echo ""
 echo "💡 提示: 可以使用Markdown查看器或编辑器打开报告文件"
-
-# 如果健康率低于80%，输出警告
-if [[ $total_nodes -gt 0 ]]; then
-    health_rate=$(( (healthy_nodes * 100) / total_nodes ))
-    if [[ $health_rate -lt 80 ]]; then
-        echo "⚠️  警告: 集群健康率较低 (${health_rate}%)，请检查异常节点"
-    fi
-fi
