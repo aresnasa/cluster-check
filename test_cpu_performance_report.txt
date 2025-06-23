@@ -1,0 +1,46 @@
+=== Master节点健康检查报告 ===
+主机名: test-node
+时间: 2025年 6月23日 星期一 23时46分00秒 CST
+内核版本: 5.4.0-generic
+操作系统: Ubuntu 20.04
+
+=== Kubernetes检查 ===
+✅ kubectl: 可用
+✅ 集群连接: 正常
+
+=== etcd检查 ===
+✅ etcd服务: 运行中
+✅ etcdctl: 可用
+
+=== 系统配置检查 ===
+✅ Cgroup: v2
+✅ Firewalld: 已关闭
+✅ UFW: 已关闭
+✅ SELinux: 已禁用
+✅ Swap: 已禁用
+✅ 时区: Asia/Shanghai
+✅ 时间同步: 已配置
+
+=== CPU节能模式检查 ===
+✅ CPU调频策略: performance
+✅ CPU空闲状态: 支持
+✅ cpupower工具: 可用
+
+=== Kubernetes软件包 ===
+✅ kubelet: v1.28.0
+✅ kubeadm: v1.28.0
+✅ kubectl: v1.28.0
+
+=== 数据目录位置检查 ===
+✅ kubelet数据目录: /var/lib/kubelet
+✅ etcd数据目录: /var/lib/etcd
+
+=== Master节点组件 ===
+✅ kube-apiserver: 运行中
+✅ kube-controller-manager: 运行中
+✅ kube-scheduler: 运行中
+
+=== 系统资源 ===
+CPU核心数: 8
+
+检查完成时间: 2025年 6月23日 星期一 23时46分05秒 CST

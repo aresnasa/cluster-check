@@ -25,17 +25,20 @@ if [[ ! -d "$SOURCE_DIR" ]]; then
     exit 1
 fi
 
-# 检查是否有HTML报告文件
+# 检查是否有报告文件（HTML或TXT）
 html_files_count=$(find "$SOURCE_DIR" -name "*.html" -type f | wc -l)
-if [[ $html_files_count -eq 0 ]]; then
-    echo "❌ 错误: 在 $SOURCE_DIR 目录下没有找到HTML报告文件"
+txt_files_count=$(find "$SOURCE_DIR" -name "*.txt" -type f | wc -l)
+total_files_count=$((html_files_count + txt_files_count))
+
+if [[ $total_files_count -eq 0 ]]; then
+    echo "❌ 错误: 在 $SOURCE_DIR 目录下没有找到报告文件（HTML或TXT）"
     echo "请先运行集群检查生成各节点的检查报告"
     exit 1
 fi
 
 echo "📁 源目录: $SOURCE_DIR"
 echo "📁 输出目录: $REPORT_DIR" 
-echo "📄 找到 $html_files_count 个HTML报告文件"
+echo "📄 找到 $html_files_count 个HTML报告文件，$txt_files_count 个TXT报告文件"
 
 # 提取主要检查项状态的函数
 extract_status() {
@@ -47,57 +50,150 @@ extract_status() {
         return
     fi
     
+    # 判断文件类型
+    local file_ext="${report_file##*.}"
+    
     case "$check_type" in
         "system")
-            # 系统检查状态 - 匹配HTML中的实际内容
-            if grep -q "系统检查:.*success.*成功\|系统检查:.*<span.*success.*成功" "$report_file" 2>/dev/null; then
-                echo "✅"
-            elif grep -q "系统检查:.*error.*失败\|系统检查:.*<span.*error.*失败" "$report_file" 2>/dev/null; then
-                echo "❌"
-            elif grep -q "系统检查:.*warning.*警告\|系统检查:.*<span.*warning.*警告" "$report_file" 2>/dev/null; then
-                echo "⚠️"
+            # 系统检查状态
+            if [[ "$file_ext" == "txt" ]]; then
+                # TXT文件格式检查 - 优先检查问题状态
+                if grep -q "❌.*系统配置检查\|❌.*防火墙\|❌.*SELinux\|❌.*Swap\|❌.*时区\|❌.*CPU调频策略.*powersave\|❌.*CPU调频.*powersave" "$report_file" 2>/dev/null; then
+                    echo "❌"
+                elif grep -q "⚠️.*系统配置检查\|⚠️.*防火墙\|⚠️.*SELinux\|⚠️.*Swap\|⚠️.*时区\|⚠️.*CPU调频策略\|⚠️.*CPU调频" "$report_file" 2>/dev/null; then
+                    echo "⚠️"
+                elif grep -q "✅.*系统配置检查\|✅.*防火墙\|✅.*SELinux\|✅.*Swap\|✅.*时区\|✅.*CPU调频策略.*performance\|✅.*CPU调频.*performance" "$report_file" 2>/dev/null; then
+                    echo "✅"
+                else
+                    echo "❓"
+                fi
             else
-                echo "❓"
+                # HTML文件格式检查 - 优先检查问题状态
+                if grep -q "系统检查:.*error.*失败\|系统检查:.*<span.*error.*失败\|CPU调频策略.*error.*powersave\|CPU调频.*error.*powersave" "$report_file" 2>/dev/null; then
+                    echo "❌"
+                elif grep -q "系统检查:.*warning.*警告\|系统检查:.*<span.*warning.*警告\|CPU调频策略.*warning\|CPU调频.*warning" "$report_file" 2>/dev/null || \
+                     (grep -q "CPU调频策略" "$report_file" && grep -q "status warning" "$report_file") 2>/dev/null; then
+                    echo "⚠️"
+                elif grep -q "系统检查:.*success.*成功\|系统检查:.*<span.*success.*成功\|CPU调频策略.*success.*performance\|CPU调频.*success.*performance" "$report_file" 2>/dev/null || \
+                     (grep -q "CPU调频策略" "$report_file" && grep -q "status success" "$report_file") 2>/dev/null; then
+                    echo "✅"
+                else
+                    echo "❓"
+                fi
             fi
             ;;
         "kubernetes")
             # Kubernetes检查状态
-            if grep -q "Kubernetes检查:.*success.*成功\|Kubernetes检查:.*<span.*success.*成功" "$report_file" 2>/dev/null; then
-                echo "✅"
-            elif grep -q "Kubernetes检查:.*error.*失败\|Kubernetes检查:.*<span.*error.*失败" "$report_file" 2>/dev/null; then
-                echo "❌"
-            elif grep -q "Kubernetes检查:.*warning.*警告\|Kubernetes检查:.*<span.*warning.*警告" "$report_file" 2>/dev/null; then
-                echo "⚠️"
-            elif grep -q "kubectl.*未找到" "$report_file" 2>/dev/null; then
-                echo "N/A"
+            if [[ "$file_ext" == "txt" ]]; then
+                # TXT文件格式检查
+                if grep -q "✅.*kubelet\|✅.*kubeadm\|✅.*kubectl" "$report_file" 2>/dev/null; then
+                    echo "✅"
+                elif grep -q "❌.*kubelet\|❌.*kubeadm" "$report_file" 2>/dev/null; then
+                    echo "❌"
+                elif grep -q "⚠️.*kubectl" "$report_file" 2>/dev/null; then
+                    echo "⚠️"
+                else
+                    echo "❓"
+                fi
             else
-                echo "❓"
+                # HTML文件格式检查
+                if grep -q "Kubernetes检查:.*success.*成功\|Kubernetes检查:.*<span.*success.*成功" "$report_file" 2>/dev/null; then
+                    echo "✅"
+                elif grep -q "Kubernetes检查:.*error.*失败\|Kubernetes检查:.*<span.*error.*失败" "$report_file" 2>/dev/null; then
+                    echo "❌"
+                elif grep -q "Kubernetes检查:.*warning.*警告\|Kubernetes检查:.*<span.*warning.*警告" "$report_file" 2>/dev/null; then
+                    echo "⚠️"
+                elif grep -q "kubectl.*未找到" "$report_file" 2>/dev/null; then
+                    echo "N/A"
+                else
+                    echo "❓"
+                fi
             fi
             ;;
         "gpu")
             # GPU/DCGM检查状态
-            if grep -q "GPU.*检查:.*success.*成功\|GPU.*检查:.*<span.*success.*成功\|DCGM.*检查:.*success.*成功\|DCGM.*检查:.*<span.*success.*成功" "$report_file" 2>/dev/null; then
-                echo "✅"
-            elif grep -q "GPU.*检查:.*error.*失败\|GPU.*检查:.*<span.*error.*失败\|DCGM.*检查:.*error.*失败\|DCGM.*检查:.*<span.*error.*失败" "$report_file" 2>/dev/null; then
-                echo "❌"
-            elif grep -q "GPU.*检查:.*warning.*警告\|GPU.*检查:.*<span.*warning.*警告\|DCGM.*检查:.*warning.*警告\|DCGM.*检查:.*<span.*warning.*警告" "$report_file" 2>/dev/null; then
-                echo "⚠️"
-            elif ! grep -q "GPU.*检查\|DCGM.*检查" "$report_file" 2>/dev/null; then
-                echo "N/A"
+            if [[ "$file_ext" == "txt" ]]; then
+                # TXT文件格式检查
+                if grep -q "✅.*NVIDIA SMI\|✅.*DCGM" "$report_file" 2>/dev/null; then
+                    echo "✅"
+                elif grep -q "❌.*NVIDIA SMI\|❌.*DCGM" "$report_file" 2>/dev/null; then
+                    echo "❌"
+                elif grep -q "⚠️.*DCGM" "$report_file" 2>/dev/null; then
+                    echo "⚠️"
+                elif ! grep -q "NVIDIA SMI\|DCGM" "$report_file" 2>/dev/null; then
+                    echo "N/A"
+                else
+                    echo "❓"
+                fi
             else
-                echo "❓"
+                # HTML文件格式检查
+                if grep -q "GPU.*检查:.*success.*成功\|GPU.*检查:.*<span.*success.*成功\|DCGM.*检查:.*success.*成功\|DCGM.*检查:.*<span.*success.*成功" "$report_file" 2>/dev/null; then
+                    echo "✅"
+                elif grep -q "GPU.*检查:.*error.*失败\|GPU.*检查:.*<span.*error.*失败\|DCGM.*检查:.*error.*失败\|DCGM.*检查:.*<span.*error.*失败" "$report_file" 2>/dev/null; then
+                    echo "❌"
+                elif grep -q "GPU.*检查:.*warning.*警告\|GPU.*检查:.*<span.*warning.*警告\|DCGM.*检查:.*warning.*警告\|DCGM.*检查:.*<span.*warning.*警告" "$report_file" 2>/dev/null; then
+                    echo "⚠️"
+                elif ! grep -q "GPU.*检查\|DCGM.*检查" "$report_file" 2>/dev/null; then
+                    echo "N/A"
+                else
+                    echo "❓"
+                fi
+            fi
+            ;;
+        "ib")
+            # InfiniBand检查状态
+            if [[ "$file_ext" == "txt" ]]; then
+                # TXT文件格式检查
+                if grep -q "✅.*ibstat工具.*已安装\|✅.*IB端口状态.*Active" "$report_file" 2>/dev/null; then
+                    echo "✅"
+                elif grep -q "❌.*ibstat工具\|❌.*IB端口状态" "$report_file" 2>/dev/null; then
+                    echo "❌"
+                elif grep -q "⚠️.*ibstat工具\|⚠️.*IB端口状态" "$report_file" 2>/dev/null; then
+                    echo "⚠️"
+                elif ! grep -q "ibstat\|InfiniBand\|IB端口" "$report_file" 2>/dev/null; then
+                    echo "N/A"
+                else
+                    echo "❓"
+                fi
+            else
+                # HTML文件格式检查
+                if grep -q "InfiniBand.*检查:.*success.*成功\|InfiniBand.*检查:.*<span.*success.*成功\|IB.*检查:.*success.*成功\|IB.*检查:.*<span.*success.*成功" "$report_file" 2>/dev/null; then
+                    echo "✅"
+                elif grep -q "InfiniBand.*检查:.*error.*失败\|InfiniBand.*检查:.*<span.*error.*失败\|IB.*检查:.*error.*失败\|IB.*检查:.*<span.*error.*失败" "$report_file" 2>/dev/null; then
+                    echo "❌"
+                elif grep -q "InfiniBand.*检查:.*warning.*警告\|InfiniBand.*检查:.*<span.*warning.*警告\|IB.*检查:.*warning.*警告\|IB.*检查:.*<span.*warning.*警告" "$report_file" 2>/dev/null; then
+                    echo "⚠️"
+                elif ! grep -q "InfiniBand.*检查\|IB.*检查" "$report_file" 2>/dev/null; then
+                    echo "N/A"
+                else
+                    echo "❓"
+                fi
             fi
             ;;
         "resource")
             # 资源检查状态
-            if grep -q "资源状态:.*success.*成功\|资源状态:.*<span.*success.*成功" "$report_file" 2>/dev/null; then
-                echo "✅"
-            elif grep -q "资源状态:.*warning.*警告\|资源状态:.*<span.*warning.*警告" "$report_file" 2>/dev/null; then
-                echo "⚠️"
-            elif grep -q "资源状态:.*error.*失败\|资源状态:.*<span.*error.*失败" "$report_file" 2>/dev/null; then
-                echo "❌"
+            if [[ "$file_ext" == "txt" ]]; then
+                # TXT文件格式检查 - 基于目录检查结果
+                if grep -q "✅.*数据目录\|✅.*kubelet数据目录\|✅.*containerd数据目录\|✅.*docker数据目录" "$report_file" 2>/dev/null; then
+                    echo "✅"
+                elif grep -q "⚠️.*数据目录\|⚠️.*kubelet数据目录\|⚠️.*containerd数据目录\|⚠️.*docker数据目录" "$report_file" 2>/dev/null; then
+                    echo "⚠️"
+                elif grep -q "❌.*数据目录\|❌.*kubelet数据目录\|❌.*containerd数据目录\|❌.*docker数据目录" "$report_file" 2>/dev/null; then
+                    echo "❌"
+                else
+                    echo "❓"
+                fi
             else
-                echo "❓"
+                # HTML文件格式检查
+                if grep -q "资源状态:.*success.*成功\|资源状态:.*<span.*success.*成功" "$report_file" 2>/dev/null; then
+                    echo "✅"
+                elif grep -q "资源状态:.*warning.*警告\|资源状态:.*<span.*warning.*警告" "$report_file" 2>/dev/null; then
+                    echo "⚠️"
+                elif grep -q "资源状态:.*error.*失败\|资源状态:.*<span.*error.*失败" "$report_file" 2>/dev/null; then
+                    echo "❌"
+                else
+                    echo "❓"
+                fi
             fi
             ;;
         *)
@@ -133,8 +229,8 @@ cat > "$OUTPUT_FILE" << EOF
 
 ## 📊 集群检查结果汇总
 
-| 主机名 | 节点类型 | 系统检查 | Kubernetes | GPU/DCGM | 资源状态 | 整体状态 |
-|--------|----------|----------|------------|-----------|----------|----------|
+| 主机名 | 节点类型 | 系统检查 | Kubernetes | GPU/DCGM | InfiniBand | 资源状态 | 整体状态 |
+|--------|----------|----------|------------|-----------|------------|----------|----------|
 EOF
 
 # 统计信息
@@ -143,15 +239,26 @@ healthy_nodes=0
 warning_nodes=0
 failed_nodes=0
 
-# 遍历所有报告文件
-for report_file in "$SOURCE_DIR"/*.html; do
+# 使用临时文件存储已处理的主机名，避免重复统计
+processed_hosts_file="/tmp/processed_hosts_$$"
+touch "$processed_hosts_file"
+
+# 遍历所有报告文件（HTML和TXT）
+for report_file in "$SOURCE_DIR"/*.html "$SOURCE_DIR"/*.txt; do
+    # 检查文件是否存在（避免通配符无匹配时的问题）
     if [[ -f "$report_file" ]]; then
         # 提取主机名 - 从文件名中提取，保持完整格式
-        hostname=$(basename "$report_file" .html)
+        hostname=$(basename "$report_file")
+        # 移除文件扩展名
+        hostname="${hostname%.*}"
         
         # 清理主机名（移除前缀，保留完整的hostname格式）
         if [[ "$hostname" =~ _check_report_ ]]; then
             hostname=$(echo "$hostname" | sed 's/.*_check_report_//')
+        elif [[ "$hostname" =~ _check_simplified_ ]]; then
+            hostname=$(echo "$hostname" | sed 's/.*_check_simplified_//' | sed 's/_[0-9]*$//')
+        elif [[ "$hostname" =~ _check_ ]]; then
+            hostname=$(echo "$hostname" | sed 's/.*_check_//' | sed 's/_[0-9]*$//')
         fi
         
         # 跳过可能的统一报告文件
@@ -159,14 +266,46 @@ for report_file in "$SOURCE_DIR"/*.html; do
             continue
         fi
         
-        # 如果hostname还是像20733这样的数字，尝试从HTML标题中提取
+        # 进一步清理主机名：移除时间戳
+        hostname=$(echo "$hostname" | sed 's/_[0-9]\{8\}_[0-9]\{6\}$//')
+        
+        # 如果hostname还是像20250623这样的数字，尝试从文件内容中提取
         if [[ "$hostname" =~ ^[0-9]+$ ]]; then
-            # 从HTML文件的title标签中提取主机名
-            title_hostname=$(grep -o '<title>.*</title>' "$report_file" 2>/dev/null | sed 's/<title>.*- \([^<]*\)<\/title>/\1/' | tr -d ' ')
-            if [[ -n "$title_hostname" && "$title_hostname" != "$hostname" ]]; then
-                hostname="$title_hostname"
+            # 尝试从文件内容中提取真实主机名
+            local_hostname=""
+            if [[ "$report_file" =~ \.html$ ]]; then
+                # 从HTML文件的title标签或内容中提取主机名
+                local_hostname=$(grep -o '<title>.*</title>' "$report_file" 2>/dev/null | sed 's/<title>.*- \([^<]*\)<\/title>/\1/' | tr -d ' ')
+                if [[ -z "$local_hostname" || "$local_hostname" =~ ^[0-9]+$ ]]; then
+                    local_hostname=$(grep -o "主机名:.*<" "$report_file" 2>/dev/null | sed 's/主机名: *\([^<]*\)<.*/\1/' | tr -d ' ')
+                fi
+            else
+                # 从TXT文件中提取主机名
+                local_hostname=$(grep "主机名:" "$report_file" 2>/dev/null | head -1 | sed 's/.*主机名: *\([^ ]*\).*/\1/')
+            fi
+            
+            if [[ -n "$local_hostname" && ! "$local_hostname" =~ ^[0-9]+$ ]]; then
+                hostname="$local_hostname"
+            else
+                # 如果还是无法提取，使用文件名基础部分
+                base_name=$(basename "$report_file")
+                if [[ "$base_name" =~ localhost ]]; then
+                    hostname="localhost"
+                elif [[ "$base_name" =~ test.*worker ]]; then
+                    hostname=$(echo "$base_name" | grep -o 'test-[^_]*-[^_]*' | head -1)
+                elif [[ "$base_name" =~ test.*master ]]; then
+                    hostname=$(echo "$base_name" | grep -o 'test-[^_]*-[^_]*' | head -1)
+                fi
             fi
         fi
+        
+        # 检查是否已处理过这个主机
+        if grep -q "^$hostname$" "$processed_hosts_file" 2>/dev/null; then
+            continue
+        fi
+        
+        # 记录该主机已处理
+        echo "$hostname" >> "$processed_hosts_file"
         
         total_nodes=$((total_nodes + 1))
         
@@ -177,14 +316,22 @@ for report_file in "$SOURCE_DIR"/*.html; do
         system_status=$(extract_status "$report_file" "system")
         k8s_status=$(extract_status "$report_file" "kubernetes")
         gpu_status=$(extract_status "$report_file" "gpu")
+        
+        # IB状态检查只针对GPU Worker节点
+        if [[ "$node_type" == "GPU Worker" ]]; then
+            ib_status=$(extract_status "$report_file" "ib")
+        else
+            ib_status="➖"
+        fi
+        
         resource_status=$(extract_status "$report_file" "resource")
         
         # 计算整体状态
         overall_status="✅"
-        if [[ "$system_status" == "❌" || "$k8s_status" == "❌" || "$gpu_status" == "❌" || "$resource_status" == "❌" ]]; then
+        if [[ "$system_status" == "❌" || "$k8s_status" == "❌" || "$gpu_status" == "❌" || "$ib_status" == "❌" || "$resource_status" == "❌" ]]; then
             overall_status="❌"
             failed_nodes=$((failed_nodes + 1))
-        elif [[ "$system_status" == "⚠️" || "$k8s_status" == "⚠️" || "$gpu_status" == "⚠️" || "$resource_status" == "⚠️" ]]; then
+        elif [[ "$system_status" == "⚠️" || "$k8s_status" == "⚠️" || "$gpu_status" == "⚠️" || "$ib_status" == "⚠️" || "$resource_status" == "⚠️" ]]; then
             overall_status="⚠️"
             warning_nodes=$((warning_nodes + 1))
         else
@@ -192,7 +339,7 @@ for report_file in "$SOURCE_DIR"/*.html; do
         fi
         
         # 生成表格行
-        echo "| **$hostname** | $node_type | $system_status | $k8s_status | $gpu_status | $resource_status | $overall_status |" >> "$OUTPUT_FILE"
+        echo "| **$hostname** | $node_type | $system_status | $k8s_status | $gpu_status | $ib_status | $resource_status | $overall_status |" >> "$OUTPUT_FILE"
     fi
 done
 
@@ -234,6 +381,7 @@ cat >> "$OUTPUT_FILE" << 'EOF'
 - **系统检查**: 防火墙、SELinux、Swap、时区、时间同步等基础系统配置
 - **Kubernetes**: kubelet、kubectl、kubeadm、容器运行时等K8s组件状态
 - **GPU/DCGM**: GPU驱动、DCGM监控工具状态（仅GPU节点）
+- **InfiniBand**: IB网络适配器状态、ibstat检查（仅配置了IB的节点）
 - **资源状态**: 磁盘空间、内存使用、数据目录位置等资源检查
 
 ### 节点类型
@@ -269,3 +417,6 @@ if [[ $total_nodes -gt 0 ]]; then
         echo "⚠️  警告: 集群健康率较低 (${health_rate}%)，请检查异常节点"
     fi
 fi
+
+# 清理临时文件
+rm -f "$processed_hosts_file"

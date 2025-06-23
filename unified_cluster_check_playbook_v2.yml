@@ -385,7 +385,6 @@
 # ===========================================
 - name: "本地汇总集群检查报告"
   hosts: localhost
-  connection: local
   gather_facts: no
   vars:
     local_results_dir: "./cluster_check_results"

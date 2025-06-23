@@ -28,6 +28,8 @@ echo "🔧 在$HOSTNAME上开始CPU Worker节点健康检查"
 echo "📅 时间戳: $(date)"
 echo "📂 报告将保存到: $REPORT_FILE"
 
+
+
 # 生成HTML报告
 if [ "$OUTPUT_FORMAT" = "html" ]; then
     if [ "$SIMPLIFIED_REPORT" = "true" ]; then
@@ -53,6 +55,7 @@ if [ "$OUTPUT_FORMAT" = "html" ]; then
         .status.success { background: #d4edda; color: #155724; }
         .status.warning { background: #fff3cd; color: #856404; }
         .status.error { background: #f8d7da; color: #721c24; }
+        .status.na { background: #e2e3e5; color: #383d41; }
         .footer { background: #f8f9fa; padding: 15px; text-align: center; color: #6c757d; border-top: 1px solid #dee2e6; }
     </style>
 </head>
@@ -124,6 +127,21 @@ EOF
         echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
     fi
     
+    # CPU节能模式检查
+    echo '<div class="check-item"><span class="check-name">CPU调频策略</span>' >> "$REPORT_FILE"
+    if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
+        current_governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo "unknown")
+        if [ "$current_governor" = "performance" ]; then
+            echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+        elif [ "$current_governor" = "powersave" ]; then
+            echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+        else
+            echo '<span class="status warning">警告</span></div>' >> "$REPORT_FILE"
+        fi
+    else
+        echo '<span class="status warning">警告</span></div>' >> "$REPORT_FILE"
+    fi
+    
     # Kubernetes软件包检查
     echo '<div class="check-item"><span class="check-name">kubelet安装</span>' >> "$REPORT_FILE"
     if command -v kubelet >/dev/null 2>&1; then
@@ -146,6 +164,7 @@ EOF
         echo '<span class="status warning">警告</span></div>' >> "$REPORT_FILE"
     fi
     
+
     # 数据目录位置检查
     echo '<div class="check-item"><span class="check-name">kubelet数据目录</span>' >> "$REPORT_FILE"
     kubelet_data_dir="/var/lib/kubelet"
@@ -394,6 +413,86 @@ EOF
     fi
     echo '</div>' >> "$REPORT_FILE"
     
+    # CPU节能模式检查
+    echo '<div class="info-card">' >> "$REPORT_FILE"
+    echo '<h3>⚡ CPU节能模式检查</h3>' >> "$REPORT_FILE"
+    
+    # 检查CPU调频策略
+    if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
+        current_governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo "unknown")
+        if [ "$current_governor" = "performance" ]; then
+            echo '<p><strong>CPU调频策略:</strong> <span class="status success">performance ✅</span></p>' >> "$REPORT_FILE"
+        elif [ "$current_governor" = "powersave" ]; then
+            echo '<p><strong>CPU调频策略:</strong> <span class="status error">powersave ❌</span></p>' >> "$REPORT_FILE"
+            echo '<p>❗ 警告：建议将CPU调频策略设置为performance以获得最佳性能</p>' >> "$REPORT_FILE"
+        else
+            echo "<p><strong>CPU调频策略:</strong> <span class=\"status warning\">$current_governor ⚠️</span></p>" >> "$REPORT_FILE"
+            echo '<p>💡 建议：对于生产环境，推荐使用performance策略</p>' >> "$REPORT_FILE"
+        fi
+        
+        # 显示可用的调频策略
+        available_governors=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null || echo "unknown")
+        echo "<p><strong>可用调频策略:</strong> $available_governors</p>" >> "$REPORT_FILE"
+        
+        # 显示当前CPU频率
+        current_freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)
+        if [ -n "$current_freq" ]; then
+            freq_mhz=$((current_freq / 1000))
+            echo "<p><strong>当前CPU频率:</strong> ${freq_mhz} MHz</p>" >> "$REPORT_FILE"
+        fi
+        
+        # 显示最大和最小频率
+        max_freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null)
+        min_freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq 2>/dev/null)
+        if [ -n "$max_freq" ] && [ -n "$min_freq" ]; then
+            max_freq_mhz=$((max_freq / 1000))
+            min_freq_mhz=$((min_freq / 1000))
+            echo "<p><strong>频率范围:</strong> ${min_freq_mhz} MHz - ${max_freq_mhz} MHz</p>" >> "$REPORT_FILE"
+        fi
+    else
+        echo '<p><strong>CPU调频:</strong> <span class="status warning">不支持或未启用 ⚠️</span></p>' >> "$REPORT_FILE"
+    fi
+    
+    # 检查CPU空闲状态控制
+    if [ -d /sys/devices/system/cpu/cpu0/cpuidle ]; then
+        echo '<p><strong>CPU空闲状态:</strong> <span class="status success">支持</span></p>' >> "$REPORT_FILE"
+        
+        # 检查是否禁用了深度睡眠状态
+        deep_sleep_disabled=true
+        for state_dir in /sys/devices/system/cpu/cpu0/cpuidle/state*; do
+            if [ -d "$state_dir" ]; then
+                state_name=$(cat "$state_dir/name" 2>/dev/null)
+                state_disable=$(cat "$state_dir/disable" 2>/dev/null)
+                if [[ "$state_name" =~ (C6|C7|C8|C9|C10) ]] && [ "$state_disable" = "0" ]; then
+                    deep_sleep_disabled=false
+                    break
+                fi
+            fi
+        done
+        
+        if [ "$deep_sleep_disabled" = "true" ]; then
+            echo '<p><strong>深度睡眠状态:</strong> <span class="status success">已禁用 ✅</span></p>' >> "$REPORT_FILE"
+        else
+            echo '<p><strong>深度睡眠状态:</strong> <span class="status warning">启用中 ⚠️</span></p>' >> "$REPORT_FILE"
+            echo '<p>💡 建议：对于高性能要求的工作负载，可考虑禁用深度睡眠状态</p>' >> "$REPORT_FILE"
+        fi
+    else
+        echo '<p><strong>CPU空闲状态:</strong> <span class="status warning">不支持</span></p>' >> "$REPORT_FILE"
+    fi
+    
+    # 检查电源管理设置
+    if command -v cpupower >/dev/null 2>&1; then
+        echo '<p><strong>cpupower工具:</strong> <span class="status success">可用 ✅</span></p>' >> "$REPORT_FILE"
+        echo '<div class="command-output">' >> "$REPORT_FILE"
+        echo "=== CPU频率信息 ===" >> "$REPORT_FILE"
+        cpupower frequency-info 2>/dev/null | head -20 || echo "无法获取CPU频率信息" >> "$REPORT_FILE"
+        echo '</div>' >> "$REPORT_FILE"
+    else
+        echo '<p><strong>cpupower工具:</strong> <span class="status warning">不可用 ⚠️</span></p>' >> "$REPORT_FILE"
+        echo '<p>💡 提示：安装cpupower工具以便更好地管理CPU电源策略</p>' >> "$REPORT_FILE"
+    fi
+    echo '</div>' >> "$REPORT_FILE"
+    
     # Kubernetes软件包检查
     echo '<div class="info-card">' >> "$REPORT_FILE"
     echo '<h3>📦 Kubernetes软件包检查</h3>' >> "$REPORT_FILE"
@@ -606,6 +705,77 @@ else
             echo "✅ 时间同步: NTP运行中"
         else
             echo "❌ 时间同步: 未配置"
+        fi
+        
+        # CPU节能模式检查
+        echo ""
+        echo "=== CPU节能模式检查 ==="
+        
+        # 检查CPU调频策略
+        if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
+            current_governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo "unknown")
+            if [ "$current_governor" = "performance" ]; then
+                echo "✅ CPU调频策略: performance"
+            elif [ "$current_governor" = "powersave" ]; then
+                echo "❌ CPU调频策略: powersave (建议设置为performance)"
+            else
+                echo "⚠️ CPU调频策略: $current_governor (建议设置为performance)"
+            fi
+            
+            # 显示可用的调频策略
+            available_governors=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null || echo "unknown")
+            echo "   可用调频策略: $available_governors"
+            
+            # 显示当前CPU频率
+            current_freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)
+            if [ -n "$current_freq" ]; then
+                freq_mhz=$((current_freq / 1000))
+                echo "   当前CPU频率: ${freq_mhz} MHz"
+            fi
+            
+            # 显示最大和最小频率
+            max_freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null)
+            min_freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq 2>/dev/null)
+            if [ -n "$max_freq" ] && [ -n "$min_freq" ]; then
+                max_freq_mhz=$((max_freq / 1000))
+                min_freq_mhz=$((min_freq / 1000))
+                echo "   频率范围: ${min_freq_mhz} MHz - ${max_freq_mhz} MHz"
+            fi
+        else
+            echo "⚠️ CPU调频: 不支持或未启用"
+        fi
+        
+        # 检查CPU空闲状态控制
+        if [ -d /sys/devices/system/cpu/cpu0/cpuidle ]; then
+            echo "✅ CPU空闲状态: 支持"
+            
+            # 检查是否禁用了深度睡眠状态
+            deep_sleep_disabled=true
+            for state_dir in /sys/devices/system/cpu/cpu0/cpuidle/state*; do
+                if [ -d "$state_dir" ]; then
+                    state_name=$(cat "$state_dir/name" 2>/dev/null)
+                    state_disable=$(cat "$state_dir/disable" 2>/dev/null)
+                    if [[ "$state_name" =~ (C6|C7|C8|C9|C10) ]] && [ "$state_disable" = "0" ]; then
+                        deep_sleep_disabled=false
+                        break
+                    fi
+                fi
+            done
+            
+            if [ "$deep_sleep_disabled" = "true" ]; then
+                echo "✅ 深度睡眠状态: 已禁用"
+            else
+                echo "⚠️ 深度睡眠状态: 启用中 (可考虑禁用以提高性能)"
+            fi
+        else
+            echo "⚠️ CPU空闲状态: 不支持"
+        fi
+        
+        # 检查电源管理设置
+        if command -v cpupower >/dev/null 2>&1; then
+            echo "✅ cpupower工具: 可用"
+        else
+            echo "⚠️ cpupower工具: 不可用 (建议安装)"
         fi
         echo ""
         

@@ -1,0 +1,33 @@
+=== GPU Worker节点健康检查报告 ===
+主机名: test-gpu-worker
+时间: 2025年 6月23日 星期一 23时51分00秒 CST
+内核版本: 5.4.0-generic
+操作系统: Ubuntu 20.04
+
+=== 系统配置检查 ===
+✅ Cgroup: v2
+✅ Firewalld: 已关闭
+✅ UFW: 已关闭
+✅ SELinux: 已禁用
+✅ Swap: 已禁用
+✅ 时区: Asia/Shanghai
+✅ 时间同步: 已配置
+
+=== CPU节能模式检查 ===
+⚠️ CPU调频策略: ondemand (建议设置为performance)
+✅ CPU空闲状态: 支持
+✅ cpupower工具: 可用
+
+=== GPU和容器运行时 ===
+✅ NVIDIA SMI: 可用
+✅ DCGM CLI: 可用
+✅ Docker: Docker version 24.0.2
+✅ Docker服务: 运行中
+✅ Containerd: 已安装
+
+=== 系统资源 ===
+CPU核心数: 8
+CPU型号: Intel(R) Xeon(R) CPU E5-2686 v4 @ 2.30GHz
+总内存: 32GB
+
+检查完成时间: 2025年 6月23日 星期一 23时51分05秒 CST

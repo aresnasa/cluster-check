@@ -232,33 +232,33 @@ build_ansible_command() {
     case "$ENVIRONMENT" in
         "demo")
             if [[ -z "$PLAYBOOK_TAGS" ]]; then
-                ansible_cmd="$ansible_cmd --limit k8s_masters_demo,k8s_cpu_workers_demo,k8s_gpu_workers_demo"
+                ansible_cmd="$ansible_cmd --limit k8s_masters_demo,k8s_cpu_workers_demo,k8s_gpu_workers_demo,localhost"
             else
                 # 当指定了tags时，也要限制到demo环境的主机
                 if [[ "$PLAYBOOK_TAGS" == *"p1_master_check"* ]]; then
-                    ansible_cmd="$ansible_cmd --limit k8s_masters_demo"
+                    ansible_cmd="$ansible_cmd --limit k8s_masters_demo,localhost"
                 elif [[ "$PLAYBOOK_TAGS" == *"p2_cpu_worker_check"* ]]; then
-                    ansible_cmd="$ansible_cmd --limit k8s_cpu_workers_demo"
+                    ansible_cmd="$ansible_cmd --limit k8s_cpu_workers_demo,localhost"
                 elif [[ "$PLAYBOOK_TAGS" == *"p3_gpu_worker_check"* ]]; then
-                    ansible_cmd="$ansible_cmd --limit k8s_gpu_workers_demo"
+                    ansible_cmd="$ansible_cmd --limit k8s_gpu_workers_demo,localhost"
                 else
-                    ansible_cmd="$ansible_cmd --limit k8s_masters_demo,k8s_cpu_workers_demo,k8s_gpu_workers_demo"
+                    ansible_cmd="$ansible_cmd --limit k8s_masters_demo,k8s_cpu_workers_demo,k8s_gpu_workers_demo,localhost"
                 fi
             fi
             ;;
         "production")
             if [[ -z "$PLAYBOOK_TAGS" ]]; then
-                ansible_cmd="$ansible_cmd --limit k8s_masters,k8s_cpu_workers,k8s_gpu_workers"
+                ansible_cmd="$ansible_cmd --limit k8s_masters,k8s_cpu_workers,k8s_gpu_workers,localhost"
             else
                 # 当指定了tags时，也要限制到生产环境的主机
                 if [[ "$PLAYBOOK_TAGS" == *"p1_master_check"* ]]; then
-                    ansible_cmd="$ansible_cmd --limit k8s_masters"
+                    ansible_cmd="$ansible_cmd --limit k8s_masters,localhost"
                 elif [[ "$PLAYBOOK_TAGS" == *"p2_cpu_worker_check"* ]]; then
-                    ansible_cmd="$ansible_cmd --limit k8s_cpu_workers"
+                    ansible_cmd="$ansible_cmd --limit k8s_cpu_workers,localhost"
                 elif [[ "$PLAYBOOK_TAGS" == *"p3_gpu_worker_check"* ]]; then
-                    ansible_cmd="$ansible_cmd --limit k8s_gpu_workers"
+                    ansible_cmd="$ansible_cmd --limit k8s_gpu_workers,localhost"
                 else
-                    ansible_cmd="$ansible_cmd --limit k8s_masters,k8s_cpu_workers,k8s_gpu_workers"
+                    ansible_cmd="$ansible_cmd --limit k8s_masters,k8s_cpu_workers,k8s_gpu_workers,localhost"
                 fi
             fi
             ;;
