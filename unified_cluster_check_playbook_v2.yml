@@ -5,6 +5,16 @@
 # 特点: copy本地模板 -> 远程执行 -> 结果回传 -> 本地汇总
 # ===========================================
 
+# 全局变量定义
+- hosts: localhost
+  gather_facts: no
+  vars:
+    remote_script_path: "/tmp/cluster_check_script.sh"
+    remote_results_dir: "/tmp/cluster_check_results"
+    remote_template_path: "/tmp/cluster_check_template.j2"
+    local_report_dir: "./cluster_check_results"
+  tasks: []
+
 # ===========================================
 # Play 1: Master节点检查
 # ===========================================
