@@ -56,6 +56,7 @@
     - name: "执行Master节点健康检查并生成报告"
       shell: |
         export OUTPUT_FORMAT="{{ output_format | default('html') }}"
+        export SIMPLIFIED_REPORT="{{ simplified_report | default('false') }}"
         export NODE_TYPE=master
         export NODE_NAME="{{ node_name | default(ansible_hostname) }}"
         "{{ check_script_path }}"
@@ -176,6 +177,7 @@
     - name: "执行CPU Worker节点健康检查并生成报告"
       shell: |
         export OUTPUT_FORMAT="{{ output_format | default('html') }}"
+        export SIMPLIFIED_REPORT="{{ simplified_report | default('false') }}"
         export NODE_TYPE=cpu_worker
         export NODE_NAME="{{ node_name | default(ansible_hostname) }}"
         "{{ check_script_path }}"
@@ -297,6 +299,7 @@
     - name: "执行GPU Worker节点健康检查并生成报告 (含DCGM监控)"
       shell: |
         export OUTPUT_FORMAT="{{ output_format | default('html') }}"
+        export SIMPLIFIED_REPORT="{{ simplified_report | default('false') }}"
         export NODE_TYPE=gpu_worker
         export NODE_NAME="{{ node_name | default(ansible_hostname) }}"
         export GPU_TYPE="{{ gpu_type | default('unknown') }}"
@@ -508,10 +511,10 @@
 
     - name: "生成简化Markdown报告"
       shell: |
-        if [ "{{ generate_markdown | default(false) | bool }}" = "True" ]; then
+        if [ "{{ generate_markdown | default('false') }}" = "true" ]; then
           if [ -x "./generate_simplified_markdown_report.sh" ]; then
             echo "生成简化Markdown报告..."
-            ./generate_simplified_markdown_report.sh "{{ local_report_dir }}"
+            ./generate_simplified_markdown_report.sh "{{ local_results_dir }}"
             if [ $? -eq 0 ]; then
               echo "✅ 简化Markdown报告生成成功"
             else
@@ -521,18 +524,12 @@
             echo "⚠️  简化Markdown报告生成脚本不存在或无执行权限"
           fi
         else
-          echo "跳过Markdown报告生成 (generate_markdown=false)"
+          echo "跳过Markdown报告生成 (generate_markdown={{ generate_markdown | default('false') }})"
         fi
       register: markdown_report_result
       tags:
         - p4_generate_markdown
         - local_generate_markdown_report
-        - generate
-        - report
-      register: unified_report_result
-      tags:
-        - p4_generate_unified
-        - local_generate_unified_report
         - generate
         - report
 

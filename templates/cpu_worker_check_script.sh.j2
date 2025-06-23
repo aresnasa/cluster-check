@@ -2,6 +2,7 @@
 # CPU Worker节点健康检查脚本
 
 OUTPUT_FORMAT="${OUTPUT_FORMAT:-html}"
+SIMPLIFIED_REPORT="${SIMPLIFIED_REPORT:-false}"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 HOSTNAME=$(hostname)
 RESULTS_DIR="/tmp/cluster_check_results"
@@ -10,9 +11,17 @@ NODE_TYPE="${NODE_TYPE:-cpu_worker}"
 mkdir -p "$RESULTS_DIR"
 
 if [ "$OUTPUT_FORMAT" = "html" ]; then
-    REPORT_FILE="$RESULTS_DIR/${HOSTNAME}_${NODE_TYPE}_check_${TIMESTAMP}.html"
+    if [ "$SIMPLIFIED_REPORT" = "true" ]; then
+        REPORT_FILE="$RESULTS_DIR/${HOSTNAME}_${NODE_TYPE}_check_simplified_${TIMESTAMP}.html"
+    else
+        REPORT_FILE="$RESULTS_DIR/${HOSTNAME}_${NODE_TYPE}_check_${TIMESTAMP}.html"
+    fi
 else
-    REPORT_FILE="$RESULTS_DIR/${HOSTNAME}_${NODE_TYPE}_check_${TIMESTAMP}.txt"
+    if [ "$SIMPLIFIED_REPORT" = "true" ]; then
+        REPORT_FILE="$RESULTS_DIR/${HOSTNAME}_${NODE_TYPE}_check_simplified_${TIMESTAMP}.txt"
+    else
+        REPORT_FILE="$RESULTS_DIR/${HOSTNAME}_${NODE_TYPE}_check_${TIMESTAMP}.txt"
+    fi
 fi
 
 echo "🔧 在$HOSTNAME上开始CPU Worker节点健康检查"
@@ -21,7 +30,187 @@ echo "📂 报告将保存到: $REPORT_FILE"
 
 # 生成HTML报告
 if [ "$OUTPUT_FORMAT" = "html" ]; then
-    cat > "$REPORT_FILE" << 'EOF'
+    if [ "$SIMPLIFIED_REPORT" = "true" ]; then
+        # 简化HTML报告模式 - 只显示通过/失败状态
+        cat > "$REPORT_FILE" << 'EOF'
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CPU Worker节点健康检查报告 (简化版)</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 800px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow: hidden; }
+        .header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 20px; text-align: center; }
+        .header h1 { margin: 0; font-size: 2em; font-weight: 300; }
+        .header p { margin: 10px 0 0 0; opacity: 0.9; font-size: 1em; }
+        .content { padding: 20px; }
+        .check-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; }
+        .check-item:last-child { border-bottom: none; }
+        .check-name { font-weight: 500; }
+        .status { padding: 4px 12px; border-radius: 20px; font-weight: bold; text-transform: uppercase; font-size: 0.8em; }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.warning { background: #fff3cd; color: #856404; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .footer { background: #f8f9fa; padding: 15px; text-align: center; color: #6c757d; border-top: 1px solid #dee2e6; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💻 CPU Worker节点健康检查 (简化版)</h1>
+            <p>主机: $(hostname) | 类型: CPU Worker | 生成时间: $(date)</p>
+        </div>
+        <div class="content">
+EOF
+
+    # 添加简化检查项目（类似master但适用于worker节点）
+    echo '<div class="check-item"><span class="check-name">系统配置检查</span>' >> "$REPORT_FILE"
+    
+    # Cgroup版本检查
+    if [ -d /sys/fs/cgroup/unified ]; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    elif [ -d /sys/fs/cgroup/memory ]; then
+        echo '<span class="status warning">警告</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    # 防火墙状态检查
+    echo '<div class="check-item"><span class="check-name">防火墙状态</span>' >> "$REPORT_FILE"
+    if ! systemctl is-active --quiet firewalld && ! systemctl is-active --quiet ufw; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    # SELinux检查
+    echo '<div class="check-item"><span class="check-name">SELinux状态</span>' >> "$REPORT_FILE"
+    if command -v getenforce >/dev/null 2>&1; then
+        selinux_status=$(getenforce 2>/dev/null)
+        if [ "$selinux_status" = "Disabled" ]; then
+            echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+        else
+            echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+        fi
+    else
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    # Swap检查
+    echo '<div class="check-item"><span class="check-name">Swap状态</span>' >> "$REPORT_FILE"
+    swap_info=$(swapon --show 2>/dev/null)
+    if [ -z "$swap_info" ]; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    # 时区检查
+    echo '<div class="check-item"><span class="check-name">时区配置</span>' >> "$REPORT_FILE"
+    current_timezone=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "unknown")
+    if [ "$current_timezone" = "Asia/Shanghai" ]; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    # 时间同步检查
+    echo '<div class="check-item"><span class="check-name">时间同步</span>' >> "$REPORT_FILE"
+    if systemctl is-active --quiet chronyd || systemctl is-active --quiet ntp; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    # Kubernetes软件包检查
+    echo '<div class="check-item"><span class="check-name">kubelet安装</span>' >> "$REPORT_FILE"
+    if command -v kubelet >/dev/null 2>&1; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    echo '<div class="check-item"><span class="check-name">kubeadm安装</span>' >> "$REPORT_FILE"
+    if command -v kubeadm >/dev/null 2>&1; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    echo '<div class="check-item"><span class="check-name">kubectl安装</span>' >> "$REPORT_FILE"
+    if command -v kubectl >/dev/null 2>&1; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status warning">警告</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    # 数据目录位置检查
+    echo '<div class="check-item"><span class="check-name">kubelet数据目录</span>' >> "$REPORT_FILE"
+    kubelet_data_dir="/var/lib/kubelet"
+    if [ -d "$kubelet_data_dir" ] && ! echo "$kubelet_data_dir" | grep -q "^/home"; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    elif [ -d "$kubelet_data_dir" ]; then
+        echo '<span class="status warning">警告</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    echo '<div class="check-item"><span class="check-name">containerd数据目录</span>' >> "$REPORT_FILE"
+    containerd_data_dir="/var/lib/containerd"
+    if [ -d "$containerd_data_dir" ] && ! echo "$containerd_data_dir" | grep -q "^/home"; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    elif [ -d "$containerd_data_dir" ]; then
+        echo '<span class="status warning">警告</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    echo '<div class="check-item"><span class="check-name">docker数据目录</span>' >> "$REPORT_FILE"
+    if command -v docker >/dev/null 2>&1 && systemctl is-active --quiet docker; then
+        docker_data_dir=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "/var/lib/docker")
+        if [ -d "$docker_data_dir" ] && ! echo "$docker_data_dir" | grep -q "^/home"; then
+            echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+        elif [ -d "$docker_data_dir" ]; then
+            echo '<span class="status warning">警告</span></div>' >> "$REPORT_FILE"
+        else
+            echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+        fi
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    # 容器运行时检查
+    echo '<div class="check-item"><span class="check-name">Docker状态</span>' >> "$REPORT_FILE"
+    if command -v docker >/dev/null 2>&1 && systemctl is-active --quiet docker; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status error">失败</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    echo '<div class="check-item"><span class="check-name">Containerd状态</span>' >> "$REPORT_FILE"
+    if command -v containerd >/dev/null 2>&1; then
+        echo '<span class="status success">通过</span></div>' >> "$REPORT_FILE"
+    else
+        echo '<span class="status warning">警告</span></div>' >> "$REPORT_FILE"
+    fi
+    
+    # 添加页脚
+    cat >> "$REPORT_FILE" << 'EOF'
+        </div>
+        <div class="footer">
+            <p>🔍 CPU Worker节点健康检查 (简化版) 完成于 $(date)</p>
+            <p>由Kubernetes集群检查工具生成</p>
+        </div>
+    </div>
+</body>
+</html>
+EOF
+
+    else
+        # 完整HTML报告模式
+        cat > "$REPORT_FILE" << 'EOF'
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
